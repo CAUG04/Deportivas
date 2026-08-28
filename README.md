@@ -38,9 +38,17 @@ no solo con documentación:
 **Fase 0 — Scaffolding.** Estructura del repo, esquema de datos declarado una
 única vez (`src/deportivas/contracts/`), configuración validada
 (`src/deportivas/config/`), migración inicial de Alembic, capa de
-repositorio abstracta (interfaces, sin implementación todavía), y el
-guardián de leakage temporal. Sin ingesta de datos real todavía — eso es la
-Fase 1.
+repositorio abstracta (interfaces), y el guardián de leakage temporal.
+
+**Fase 1 — Ingesta.** Implementaciones reales de la capa de repositorio
+(DuckDB/Parquet y Postgres, ambas con upsert idempotente sobre la clave
+natural de cada tabla), la capa cruda append-only (`storage/duckdb_repo/raw_store.py`),
+y un adaptador por fuente detrás de la interfaz común `DataSource`
+(`src/deportivas/ingest/`): FBref, Understat, ESPN y football-data.co.uk vía
+`soccerdata`; NFL vía `nfl_data_py`; NBA/NHL vía `sportsdataverse`; MLB vía
+`pybaseball`; cuotas en vivo vía The Odds API. Un CLI (`deportivas ingest ...`)
+expone cada adaptador como comando. Ver [limitaciones conocidas](#limitaciones-conocidas-de-la-fase-1)
+abajo — documentadas, no escondidas.
 
 ## Cobertura objetivo
 
@@ -56,13 +64,15 @@ nueva es añadir un bloque en ese YAML, no escribir código.
 
 ## Sobre las fuentes de datos: qué existe y qué no
 
-- **Fútbol europeo (5 grandes ligas):** FBref, Understat, Club Elo, ESPN y
+- **Fútbol europeo (5 grandes ligas):** FBref, Understat, ESPN y
   football-data.co.uk vía `soccerdata`, con identificadores de liga
-  verificados contra `soccerdata.LEAGUE_DICT`.
+  verificados contra `soccerdata.LEAGUE_DICT` y los mapeos de columnas
+  verificados leyendo el código fuente instalado de `soccerdata` (no
+  adivinados) — ver los docstrings de módulo en `src/deportivas/ingest/sources/`.
 - **Eredivisie, Primeira Liga, UEFA, Liga BetPlay:** los identificadores de
   fuente en `competitions.yaml` están declarados pero **no verificados
-  contra las fuentes en vivo** en esta fase (esta sesión de desarrollo no
-  tiene acceso de red a FBref, ESPN ni The Odds API). El workflow
+  contra las fuentes en vivo** todavía (esta sesión de desarrollo no tiene
+  acceso de red a FBref, ESPN ni The Odds API). El workflow
   `sources-health.yml` (Fase 10) los valida en cada ejecución y falla
   nombrando exactamente qué fuente y qué campo no coincide.
 - **Cuotas históricas de la Liga BetPlay Dimayor: no existen en ninguna
@@ -74,6 +84,57 @@ nueva es añadir un bloque en ese YAML, no escribir código.
   `DEPORTIVAS_THE_ODDS_API_KEY` — ver `.env.example`.
 - Nunca se usa el endpoint de "predictions" de una API comercial como
   verdad: son cajas negras sin calibración publicada.
+
+## Limitaciones conocidas de la Fase 1
+
+Documentadas explícitamente porque el proyecto prefiere una limitación
+visible a una silenciosa:
+
+- **pybaseball (MLB): columnas no verificadas contra un fetch real.**
+  `schedule_and_record` raspa una tabla HTML de baseball-reference.com; sus
+  nombres de columna viven en el marcado, no en el código fuente de
+  `pybaseball`, así que no se pudieron confirmar sin red. El mapeo usa el
+  formato documentado y estable desde hace años (`Date`, `Home_Away`, `Opp`,
+  `R`, `RA`), de forma defensiva (nunca lanza sobre una fila con forma
+  inesperada), pero debe verificarse contra un fetch real antes de
+  confiarle producción — ver el docstring de
+  `src/deportivas/ingest/sources/pybaseball_source.py`. Exactamente el tipo
+  de riesgo que `sources-health.yml` (Fase 10) está pensado para atrapar.
+- **ESPN no publica marcador final en `read_schedule()`.** Toda fixture de
+  este adaptador queda `status="scheduled"`, incluso partidos ya jugados.
+  Es la única fuente para Liga BetPlay, así que sus resultados históricos
+  dependen de un futuro uso de `read_matchsheet()` (una llamada HTTP por
+  partido) — no implementado en esta fase.
+- **football-data.co.uk: solo se mapea el mercado 1X2.** Los nombres de
+  columna de hándicap asiático y over/under han cambiado más de una vez
+  entre temporadas; los del 1X2 llevan 20+ años estables. Esos mercados
+  llegan por The Odds API en su lugar.
+- **Club Elo: no ingerido en esta fase.** No hay tabla en el esquema para
+  ratings externos por equipo — Elo es algo que el propio sistema calcula
+  en la Fase 2 (features), no un dato que haga falta ingerir ya. Añadirlo
+  como fuente de validación es una decisión de la Fase 2, no un olvido.
+- **`captured_at` de football-data.co.uk es una aproximación, no una
+  observación real.** Esa fuente no publica timestamp de captura: la cuota
+  "pre-cierre" se marca en kickoff menos un día y la de cierre en el propio
+  kickoff. Documentado en el código (`is_closing` sigue siendo fiable; el
+  timestamp exacto no). The Odds API sí captura timestamps reales.
+
+## CLI de ingesta
+
+```bash
+uv run deportivas ingest --help          # lista cada adaptador como comando
+uv run deportivas seed-competitions      # carga config/competitions.yaml en la tabla competitions
+
+# Ejemplo: backfill de 3 temporadas de Premier League vía FBref
+uv run deportivas ingest fbref-schedule \
+  --competition-id eng-premier-league --fbref-league "ENG-Premier League" \
+  --seasons 2223,2324,2425
+```
+
+Backfill (histórico, `--seasons` explícito) e ingesta incremental son el
+mismo comando con una lista de temporadas distinta — la Fase 8 es la que
+programa las corridas diarias de "temporada actual"; este CLI no adivina
+ventanas de fechas por su cuenta.
 
 ## Arquitectura de datos
 
@@ -103,15 +164,29 @@ implementación está conectada, no reescribir lógica.
 
 `DEPORTIVAS_STORAGE_BACKEND=duckdb` (por defecto). Sin servidor: DuckDB es
 solo un motor de consulta sobre ficheros Parquet particionados por
-competición y temporada. Los Parquet se publican como *assets* de GitHub
-Releases (Fase 9), no como archivos del repositorio.
+competición y temporada (`storage/duckdb_repo/`). El *upsert* sobre la clave
+natural de cada tabla (lo que hace idempotente reejecutar una fuente) se
+implementa a mano — Parquet no tiene `ON CONFLICT`. Los Parquet se
+publicarán como *assets* de GitHub Releases (Fase 9), no como archivos del
+repositorio.
+
+**Capa cruda append-only** (`storage/duckdb_repo/raw_store.py`): cada
+respuesta de una fuente se guarda tal cual, con hash de contenido y
+timestamp real de captura, antes de parsear nada. Nunca se sobrescribe.
+Features y modelos deben poder reconstruirse desde aquí sin volver a
+raspar — la decisión más importante de la Fase 10, construida desde ya.
 
 ### Backend alternativo: PostgreSQL (desarrollo local / migración futura)
 
 `DEPORTIVAS_STORAGE_BACKEND=postgres`. `docker-compose.yml` levanta un
 Postgres 16 local. Las migraciones viven en `alembic/`, generadas por
 `alembic revision --autogenerate` contra la metadata derivada del mismo
-esquema (`contracts/sqlalchemy_adapter.py`) — nunca se editan a mano.
+esquema (`contracts/sqlalchemy_adapter.py`) — nunca se editan a mano. El
+*upsert* usa `INSERT ... ON CONFLICT (clave_natural) DO UPDATE`; las tablas
+append-only (`odds_snapshots`, `raw_documents`, `model_registry`) no llevan
+esa restricción — exigirla rechazaría capturas legítimas repetidas.
+`tests/unit/storage/test_sql_repository.py` (marcador `postgres`, activo en
+CI) prueba este backend contra un Postgres real, no solo contra DuckDB.
 
 **Migración futura documentada, no implementada:** cuando los datos superen
 ~1 GB o se necesiten consultas en vivo, el almacenamiento pasa a Neon
@@ -144,15 +219,28 @@ make migrate         # aplica alembic/versions/ sobre él
 config/                  YAML: competiciones, mercados, umbrales de decisión
 src/deportivas/
   config/                 Settings (Pydantic) + carga validada de config/*.yaml
-  domain/                 Enums cerrados + guardián de leakage temporal
-  contracts/               El esquema, declarado una vez, y sus tres adaptadores
-  storage/                 Interfaces de repositorio (implementaciones: Fase 1)
-  ingest/ features/ models/ backtest/ signals/ api/ export/   (Fase 1+)
+  domain/                 Enums cerrados, ids deterministas, guardián de leakage temporal
+  contracts/              El esquema, declarado una vez, y sus tres adaptadores
+  storage/
+    protocols.py           Interfaces de repositorio
+    duckdb_repo/            Implementación DuckDB/Parquet + capa cruda append-only
+    sql_repo/                Implementación Postgres
+    factory.py               Elige backend según DEPORTIVAS_STORAGE_BACKEND
+    unit_of_work.py           Escrituras agrupadas: todo o nada
+    validation.py             Pandera: fila mala se rechaza y se registra, nunca se propaga
+  ingest/
+    base.py                  Interfaz DataSource: rate limiting + archivado en capa cruda
+    ratelimit.py cache.py aliases.py
+    sources/                 Un adaptador por fuente (fbref, understat, espn,
+                              footballdata, nfl, sportsdataverse_source,
+                              pybaseball_source, theoddsapi)
+  cli.py                   Un comando por adaptador
+  features/ models/ backtest/ signals/ api/ export/   (Fase 2+)
 alembic/                  Migraciones sobre la metadata de contracts/
 frontend/                 React + Vite + TS + Tailwind (Fase 7)
 tests/
   unit/ contracts/ backtest/ fixtures/
-.github/workflows/        CI ahora; daily/odds/deploy/sources-health en fases posteriores
+.github/workflows/        CI (incluye servicio Postgres); daily/odds/deploy/sources-health en fases posteriores
 ```
 
 ## Variables de entorno

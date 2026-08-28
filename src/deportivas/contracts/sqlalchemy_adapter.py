@@ -64,9 +64,13 @@ def build_table(spec: TableSpec, metadata: sa.MetaData) -> sa.Table:
         )
 
     constraints: list[SchemaItem] = []
-    # La clave natural es lo que hace idempotente la ingesta: sin esta
-    # restriccion, reejecutar una fuente duplicaria filas.
-    if tuple(spec.natural_key) != spec.primary_key_columns:
+    # La clave natural es lo que hace idempotente la ingesta va ON CONFLICT:
+    # sin esta restriccion, reejecutar una fuente duplicaria filas. Las
+    # tablas append-only (odds_snapshots, raw_documents...) nunca hacen
+    # upsert -siempre insertan-, asi que su "clave natural" es solo
+    # documental: exigirla como UNIQUE aqui rechazaria capturas reales que
+    # coinciden en esa clave (dos snapshots en el mismo segundo, un reintento).
+    if not spec.append_only and tuple(spec.natural_key) != spec.primary_key_columns:
         constraints.append(sa.UniqueConstraint(*spec.natural_key, name=f"uq_{spec.name}_natural"))
     for index in spec.indexes:
         constraints.append(sa.Index(index.name, *index.columns, unique=index.unique))

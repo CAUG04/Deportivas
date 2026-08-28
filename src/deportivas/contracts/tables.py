@@ -107,10 +107,15 @@ FIXTURES = TableSpec(
 
 TEAM_MATCH_STATS = TableSpec(
     name="team_match_stats",
-    description="Estadisticas por equipo y partido. Una fila por equipo",
+    description=(
+        "Estadisticas por equipo, partido y fuente. 'source' es parte de la "
+        "clave: FBref y Understat estiman xG por separado y ambas filas deben "
+        "convivir en vez de que la ultima en llegar borre a la otra"
+    ),
     columns=(
         C("fixture_id", T.STR, primary_key=True, foreign_key="fixtures.id", max_length=64),
         C("team_id", T.STR, primary_key=True, foreign_key="teams.id", max_length=96),
+        C("source", T.STR, primary_key=True, max_length=64),
         C("competition_id", T.STR, max_length=64),
         C("season", T.STR, max_length=16),
         C("is_home", T.BOOL),
@@ -122,9 +127,9 @@ TEAM_MATCH_STATS = TableSpec(
         C("yellow_cards", T.INT, nullable=True),
         C("red_cards", T.INT, nullable=True),
         C("possession", T.FLOAT, nullable=True, description="Fraccion 0-1, no porcentaje"),
-        *_ingestion_columns(),
+        C("ingested_at", T.TIMESTAMP),
     ),
-    natural_key=("fixture_id", "team_id"),
+    natural_key=("fixture_id", "team_id", "source"),
     partition_by=("competition_id", "season"),
 )
 

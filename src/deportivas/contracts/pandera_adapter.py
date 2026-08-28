@@ -39,6 +39,15 @@ def build_schema(spec: TableSpec, *, strict: bool = True) -> pa.DataFrameSchema:
             nullable=col.nullable,
             required=True,
             description=col.description or None,
+            # Sin esto, una fila que supera max_length pasa la validacion en
+            # DuckDB (VARCHAR sin limite) y solo revienta al llegar a
+            # Postgres (VARCHAR(N) real): los dos backends deben rechazar lo
+            # mismo, no descubrir la discrepancia en produccion.
+            checks=(
+                [pa.Check.str_length(max_value=col.max_length)]
+                if col.max_length is not None
+                else None
+            ),
         )
         for col in spec.columns
     }

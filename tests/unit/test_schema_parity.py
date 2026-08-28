@@ -33,6 +33,25 @@ def test_sqlalchemy_has_every_table_and_column(table_name: str) -> None:
 
 
 @pytest.mark.parametrize("table_name", ALL_TABLE_NAMES)
+def test_sqlalchemy_natural_key_unique_constraint_only_on_upsertable_tables(
+    table_name: str,
+) -> None:
+    """append-only tables (odds_snapshots, raw_documents, model_registry) never
+    upsert, so a real UNIQUE constraint on their natural key would reject
+    legitimate repeated captures (two snapshots in the same second, a retry)
+    instead of just letting them both land. Only upsertable tables whose
+    natural key differs from the primary key need that constraint, for
+    ON CONFLICT (natural_key) DO UPDATE to have a target."""
+    metadata = build_metadata()
+    spec = SCHEMA.get(table_name)
+    sa_table = metadata.tables[table_name]
+    constraint_name = f"uq_{table_name}_natural"
+    has_constraint = any(c.name == constraint_name for c in sa_table.constraints)
+    needs_constraint = not spec.append_only and tuple(spec.natural_key) != spec.primary_key_columns
+    assert has_constraint == needs_constraint
+
+
+@pytest.mark.parametrize("table_name", ALL_TABLE_NAMES)
 def test_sqlalchemy_primary_key_matches(table_name: str) -> None:
     metadata = build_metadata()
     spec = SCHEMA.get(table_name)

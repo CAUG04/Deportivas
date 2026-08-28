@@ -87,9 +87,10 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -m \"not network and not postgres\""
 markers = [
-    "network: prueba que necesita red (desactivada por defecto en CI)",
+    "network: prueba que necesita red real contra una fuente externa (nunca se ejecuta en CI)",
+    "postgres: prueba que necesita una base de datos Postgres viva (desactivada localmente por defecto; ci.yml la activa con -m 'not network' y un servicio postgres)",
 ]
 filterwarnings = ["error::DeprecationWarning:deportivas.*"]
 

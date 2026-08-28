@@ -1,0 +1,315 @@
+"""``deportivas`` command-line entry point.
+
+Every ``ingest`` subcommand is thin, deliberate wiring over one already-tested
+adapter method: build the repositories for the active storage backend
+(``storage/factory.py``), build a rate limiter and a team-alias resolver for
+the right sport, call the adapter, and write the result inside a
+:class:`BufferedUnitOfWork` so a failed write never lands half a batch.
+
+Backfill (historical, explicit ``--seasons``) and incremental/daily ingestion
+are the same commands run with a different season list — Fase 8's automation
+is what schedules the narrow "current season" runs; this CLI does not guess
+season windows on its own; run it from a workflow matrix that iterates
+competitions and sources, matching ``config/competitions.yaml``.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Annotated
+
+import pandas as pd
+import typer
+
+from deportivas.config.catalog import load_competitions
+from deportivas.config.settings import get_settings
+from deportivas.contracts.tables import COMPETITIONS, FIXTURES, ODDS_SNAPSHOTS, TEAM_ALIASES, TEAMS
+from deportivas.contracts.tables import TEAM_MATCH_STATS as TEAM_MATCH_STATS_TABLE
+from deportivas.contracts.types import TableSpec
+from deportivas.ingest.aliases import TeamAliasResolver
+from deportivas.ingest.ratelimit import RateLimiter
+from deportivas.storage.factory import get_raw_document_repository, get_table_repository
+from deportivas.storage.unit_of_work import BufferedUnitOfWork
+
+app = typer.Typer(help="Ingesta, features y backtest de la plataforma de pronosticos.")
+ingest_app = typer.Typer(help="Un comando por adaptador de fuente.")
+app.add_typer(ingest_app, name="ingest")
+
+
+def _seasons_list(seasons: str) -> list[str]:
+    return [s.strip() for s in seasons.split(",") if s.strip()]
+
+
+def _int_seasons_list(seasons: str) -> list[int]:
+    return [int(s) for s in _seasons_list(seasons)]
+
+
+def _alias_resolver(sport: str) -> TeamAliasResolver:
+    return TeamAliasResolver(
+        get_table_repository(TEAMS), get_table_repository(TEAM_ALIASES), sport=sport
+    )
+
+
+def _fbref_rate_limiter() -> RateLimiter:
+    return RateLimiter(get_settings().fbref_min_delay_seconds)
+
+
+def _persist(table_spec: TableSpec, df: pd.DataFrame, *, label: str) -> None:
+    if df.empty:
+        typer.echo(f"{label}: 0 filas (nada que escribir)")
+        return
+    repo = get_table_repository(table_spec)
+    with BufferedUnitOfWork() as uow:
+        uow.stage(repo, df)
+        written = uow.commit()
+    typer.echo(f"{label}: {written} filas escritas")
+
+
+CompetitionId = Annotated[
+    str, typer.Option(help="Id de config/competitions.yaml, p.ej. eng-premier-league")
+]
+Seasons = Annotated[str, typer.Option(help="Temporadas separadas por coma, p.ej. 2223,2324,2425")]
+LeagueKey = Annotated[
+    str, typer.Option(help="Clave de liga en la fuente (ver sources: en competitions.yaml)")
+]
+
+
+@ingest_app.command("fbref-schedule")
+def fbref_schedule(
+    competition_id: CompetitionId, fbref_league: LeagueKey, seasons: Seasons
+) -> None:
+    """FBref: calendario y resultados -> fixtures."""
+    from deportivas.ingest.sources.fbref import FBrefSource
+
+    source = FBrefSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=_fbref_rate_limiter(),
+        data_dir=get_settings().cache_dir / "fbref",
+        aliases=_alias_resolver("football"),
+    )
+    df = source.fetch_schedule(
+        competition_id=competition_id, fbref_league=fbref_league, seasons=_seasons_list(seasons)
+    )
+    _persist(FIXTURES, df, label="fbref fixtures")
+
+
+@ingest_app.command("fbref-stats")
+def fbref_stats(competition_id: CompetitionId, fbref_league: LeagueKey, seasons: Seasons) -> None:
+    """FBref: estadisticas por equipo y partido -> team_match_stats."""
+    from deportivas.ingest.sources.fbref import FBrefSource
+
+    source = FBrefSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=_fbref_rate_limiter(),
+        data_dir=get_settings().cache_dir / "fbref",
+        aliases=_alias_resolver("football"),
+    )
+    df = source.fetch_team_match_stats(
+        competition_id=competition_id, fbref_league=fbref_league, seasons=_seasons_list(seasons)
+    )
+    _persist(TEAM_MATCH_STATS_TABLE, df, label="fbref team_match_stats")
+
+
+@ingest_app.command("understat-stats")
+def understat_stats(
+    competition_id: CompetitionId, understat_league: LeagueKey, seasons: Seasons
+) -> None:
+    """Understat: xG por partido -> team_match_stats."""
+    from deportivas.ingest.sources.understat import UnderstatSource
+
+    source = UnderstatSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        data_dir=get_settings().cache_dir / "understat",
+        aliases=_alias_resolver("football"),
+    )
+    df = source.fetch_team_match_stats(
+        competition_id=competition_id,
+        understat_league=understat_league,
+        seasons=_seasons_list(seasons),
+    )
+    _persist(TEAM_MATCH_STATS_TABLE, df, label="understat team_match_stats")
+
+
+@ingest_app.command("espn-schedule")
+def espn_schedule(competition_id: CompetitionId, espn_league: LeagueKey, seasons: Seasons) -> None:
+    """ESPN: calendario (sin resultado final) -> fixtures. Unica fuente para Liga BetPlay."""
+    from deportivas.ingest.sources.espn import EspnSource
+
+    source = EspnSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        data_dir=get_settings().cache_dir / "espn",
+        aliases=_alias_resolver("football"),
+    )
+    df = source.fetch_schedule(
+        competition_id=competition_id, espn_league=espn_league, seasons=_seasons_list(seasons)
+    )
+    _persist(FIXTURES, df, label="espn fixtures")
+
+
+@ingest_app.command("footballdata-games")
+def footballdata_games(
+    competition_id: CompetitionId, match_history_league: LeagueKey, seasons: Seasons
+) -> None:
+    """football-data.co.uk: resultados historicos -> fixtures."""
+    from deportivas.ingest.sources.footballdata import FootballDataSource
+
+    source = FootballDataSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        data_dir=get_settings().cache_dir / "footballdata",
+        aliases=_alias_resolver("football"),
+    )
+    df = source.fetch_games(
+        competition_id=competition_id,
+        match_history_league=match_history_league,
+        seasons=_seasons_list(seasons),
+    )
+    _persist(FIXTURES, df, label="footballdata fixtures")
+
+
+@ingest_app.command("footballdata-odds")
+def footballdata_odds(
+    competition_id: CompetitionId, match_history_league: LeagueKey, seasons: Seasons
+) -> None:
+    """football-data.co.uk: cuotas 1X2 historicas (incluye cierre Pinnacle) -> odds_snapshots."""
+    from deportivas.ingest.sources.footballdata import FootballDataSource
+
+    source = FootballDataSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        data_dir=get_settings().cache_dir / "footballdata",
+        aliases=_alias_resolver("football"),
+    )
+    df = source.fetch_1x2_odds(
+        competition_id=competition_id,
+        match_history_league=match_history_league,
+        seasons=_seasons_list(seasons),
+    )
+    _persist(ODDS_SNAPSHOTS, df, label="footballdata odds")
+
+
+@ingest_app.command("nfl-schedule")
+def nfl_schedule(competition_id: CompetitionId, seasons: Seasons) -> None:
+    """nfl_data_py: calendario NFL -> fixtures."""
+    from deportivas.ingest.sources.nfl import NflSource
+
+    source = NflSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        aliases=_alias_resolver("american_football"),
+    )
+    df = source.fetch_schedules(competition_id=competition_id, seasons=_int_seasons_list(seasons))
+    _persist(FIXTURES, df, label="nfl fixtures")
+
+
+@ingest_app.command("nba-schedule")
+def nba_schedule(competition_id: CompetitionId, seasons: Seasons) -> None:
+    """sportsdataverse: calendario NBA -> fixtures."""
+    from deportivas.ingest.sources.sportsdataverse_source import NbaSource
+
+    source = NbaSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        aliases=_alias_resolver("basketball"),
+    )
+    df = source.fetch_schedule(competition_id=competition_id, seasons=_int_seasons_list(seasons))
+    _persist(FIXTURES, df, label="nba fixtures")
+
+
+@ingest_app.command("nhl-schedule")
+def nhl_schedule(competition_id: CompetitionId, seasons: Seasons) -> None:
+    """sportsdataverse: calendario NHL -> fixtures."""
+    from deportivas.ingest.sources.sportsdataverse_source import NhlSource
+
+    source = NhlSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        aliases=_alias_resolver("ice_hockey"),
+    )
+    df = source.fetch_schedule(competition_id=competition_id, seasons=_int_seasons_list(seasons))
+    _persist(FIXTURES, df, label="nhl fixtures")
+
+
+@ingest_app.command("mlb-schedule")
+def mlb_schedule(
+    competition_id: CompetitionId,
+    season: Annotated[int, typer.Option(help="Temporada MLB, p.ej. 2025")],
+    teams: Annotated[
+        str, typer.Option(help="Abreviaturas de equipo separadas por coma, p.ej. PHI,ATL")
+    ],
+) -> None:
+    """pybaseball: calendario MLB (schedule_and_record, por equipo) -> fixtures."""
+    from deportivas.ingest.sources.pybaseball_source import PybaseballSource
+
+    source = PybaseballSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        aliases=_alias_resolver("baseball"),
+    )
+    df = source.fetch_schedule(
+        competition_id=competition_id, season=season, team_abbreviations=_seasons_list(teams)
+    )
+    _persist(FIXTURES, df, label="mlb fixtures")
+
+
+@ingest_app.command("odds-snapshot")
+def odds_snapshot(
+    competition_id: CompetitionId,
+    sport_key: Annotated[
+        str, typer.Option(help="Clave de deporte de The Odds API, p.ej. soccer_epl")
+    ],
+    season: Annotated[
+        str, typer.Option(help="Temporada de config/competitions.yaml para este calendario")
+    ],
+    market_map: Annotated[
+        str,
+        typer.Option(
+            help="raw:nuestro separados por coma, p.ej. h2h:1x2,spreads:asian_handicap,totals:over_under"
+        ),
+    ],
+) -> None:
+    """The Odds API: snapshot de cuotas en vivo -> odds_snapshots. Requiere DEPORTIVAS_THE_ODDS_API_KEY."""
+    from deportivas.ingest.sources.theoddsapi import TheOddsApiSource
+
+    settings = get_settings()
+    if not settings.has_odds_api_key:
+        raise typer.BadParameter("DEPORTIVAS_THE_ODDS_API_KEY no esta configurada")
+    assert settings.the_odds_api_key is not None
+
+    parsed_map = dict(pair.split(":", 1) for pair in market_map.split(",") if pair.strip())
+    source = TheOddsApiSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        aliases=_alias_resolver("football"),
+        api_key=settings.the_odds_api_key.get_secret_value(),
+    )
+    df = source.fetch_odds(
+        competition_id=competition_id, sport_key=sport_key, season=season, market_map=parsed_map
+    )
+    _persist(ODDS_SNAPSHOTS, df, label="theoddsapi odds")
+
+
+@app.command("seed-competitions")
+def seed_competitions() -> None:
+    """Escribe config/competitions.yaml en la tabla competitions."""
+    now = datetime.now(UTC)
+    rows = [
+        {
+            "id": competition.id,
+            "name": competition.name,
+            "country": competition.country,
+            "sport": competition.sport.value,
+            "tier": competition.tier,
+            "enabled": competition.enabled,
+            "source": "config",
+            "ingested_at": now,
+        }
+        for competition in load_competitions().competitions
+    ]
+    _persist(COMPETITIONS, pd.DataFrame(rows), label="competitions")
+
+
+if __name__ == "__main__":  # pragma: no cover - invocado por el entry point, no por los tests
+    app()

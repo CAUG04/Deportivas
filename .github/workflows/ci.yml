@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancela ejecuciones anteriores del mismo PR/branch cuando llega un push nuevo.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint + typecheck + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.6"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Instalar Python 3.11
+        run: uv python install 3.11
+
+      - name: Instalar dependencias (lockfile exacto)
+        run: uv sync --all-extras --frozen
+
+      - name: Ruff (lint)
+        run: uv run ruff check src tests alembic
+
+      - name: Ruff (formato)
+        run: uv run ruff format --check src tests alembic
+
+      - name: mypy (strict)
+        run: uv run mypy
+
+      - name: pytest (con cobertura)
+        run: uv run pytest --cov --cov-report=term-missing
+
+  # Cualquier job de este workflow que falle abre un issue automaticamente en
+  # vez de fallar en silencio (regla de Fase 10, aplicada desde ya).
+  notify-on-failure:
+    name: Abrir issue si algo fallo
+    needs: [check]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `CI en rojo: ${context.workflow} (${context.sha.slice(0, 7)})`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `El workflow **${context.workflow}** fallo en el commit ${context.sha}.`,
+              '',
+              `Ejecucion: ${runUrl}`,
+              `Branch/ref: \`${context.ref}\``,
+            ].join('\n');
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ci-failure',
+            });
+            const duplicate = existing.find((issue) => issue.title === title);
+            if (duplicate) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: duplicate.number,
+                body: `Volvio a fallar: ${runUrl}`,
+              });
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['ci-failure'],
+            });

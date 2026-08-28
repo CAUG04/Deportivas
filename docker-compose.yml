@@ -1,0 +1,31 @@
+# Solo desarrollo local. En produccion (GitHub Actions) no hay servidores:
+# el almacenamiento es DuckDB sobre Parquet y no hace falta esto.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: deportivas-postgres
+    environment:
+      POSTGRES_USER: deportivas
+      POSTGRES_PASSWORD: deportivas
+      POSTGRES_DB: deportivas
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deportivas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  adminer:
+    image: adminer:5
+    container_name: deportivas-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

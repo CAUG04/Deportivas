@@ -1,0 +1,266 @@
+# ---------------------------------------------------------------------------
+# Registro de competiciones. Anadir una liga = anadir un bloque aqui, no codigo.
+#
+# IMPORTANTE sobre los identificadores de fuente:
+#   - Los de las 5 grandes ligas europeas salen del LEAGUE_DICT de soccerdata y
+#     son fiables.
+#   - Los del resto (Eredivisie, Primeira Liga, UEFA, Colombia) se inyectan en
+#     el league_dict.json personalizado de soccerdata y NO se han podido validar
+#     contra la fuente en vivo todavia. El workflow sources-health.yml los
+#     verifica en cada ejecucion y falla nombrando el campo exacto que no cuadra.
+#   - Lo mismo aplica a las claves de The Odds API: el job de cuotas valida
+#     contra /v4/sports antes de gastar creditos.
+#
+# refresh: daily | weekly  -> cadencia de ingesta incremental. Si el job diario
+# se acerca al limite de 15 min, mover competiciones a weekly es la palanca.
+# ---------------------------------------------------------------------------
+version: 1
+
+defaults:
+  seasons_back: 5
+  refresh: daily
+  enabled: true
+
+competitions:
+  # --- Futbol europeo: ligas domesticas -----------------------------------
+  - id: eng-premier-league
+    name: Premier League
+    country: England
+    sport: football
+    tier: 1
+    season_start_month: 8
+    season_end_month: 5
+    sources:
+      soccerdata_key: "ENG-Premier League"
+      fbref: "Premier League"
+      understat: "EPL"
+      club_elo: "ENG_1"
+      match_history: "E0"
+      espn: "eng.1"
+    odds:
+      the_odds_api: soccer_epl
+
+  - id: esp-la-liga
+    name: La Liga
+    country: Spain
+    sport: football
+    tier: 1
+    season_start_month: 8
+    season_end_month: 5
+    sources:
+      soccerdata_key: "ESP-La Liga"
+      fbref: "La Liga"
+      understat: "La liga"
+      club_elo: "ESP_1"
+      match_history: "SP1"
+      espn: "esp.1"
+    odds:
+      the_odds_api: soccer_spain_la_liga
+
+  - id: ita-serie-a
+    name: Serie A
+    country: Italy
+    sport: football
+    tier: 1
+    season_start_month: 8
+    season_end_month: 5
+    sources:
+      soccerdata_key: "ITA-Serie A"
+      fbref: "Serie A (M)"
+      understat: "Serie A"
+      club_elo: "ITA_1"
+      match_history: "I1"
+      espn: "ita.1"
+    odds:
+      the_odds_api: soccer_italy_serie_a
+
+  - id: ger-bundesliga
+    name: Bundesliga
+    country: Germany
+    sport: football
+    tier: 1
+    season_start_month: 8
+    season_end_month: 5
+    sources:
+      soccerdata_key: "GER-Bundesliga"
+      fbref: "Fußball-Bundesliga"
+      understat: "Bundesliga"
+      club_elo: "GER_1"
+      match_history: "D1"
+      espn: "ger.1"
+    odds:
+      the_odds_api: soccer_germany_bundesliga
+
+  - id: fra-ligue-1
+    name: Ligue 1
+    country: France
+    sport: football
+    tier: 1
+    season_start_month: 8
+    season_end_month: 5
+    sources:
+      soccerdata_key: "FRA-Ligue 1"
+      fbref: "Ligue 1"
+      understat: "Ligue 1"
+      club_elo: "FRA_1"
+      match_history: "F1"
+      espn: "fra.1"
+    odds:
+      the_odds_api: soccer_france_ligue_one
+
+  - id: ned-eredivisie
+    name: Eredivisie
+    country: Netherlands
+    sport: football
+    tier: 1
+    season_start_month: 8
+    season_end_month: 5
+    sources:
+      soccerdata_key: "NED-Eredivisie"
+      fbref: "Eredivisie"
+      understat: null          # Understat no cubre esta liga
+      club_elo: "NED_1"
+      match_history: "N1"
+      espn: "ned.1"
+    odds:
+      the_odds_api: soccer_netherlands_eredivisie
+
+  - id: por-primeira-liga
+    name: Primeira Liga
+    country: Portugal
+    sport: football
+    tier: 1
+    season_start_month: 8
+    season_end_month: 5
+    sources:
+      soccerdata_key: "POR-Primeira Liga"
+      fbref: "Primeira Liga"
+      understat: null
+      club_elo: "POR_1"
+      match_history: "P1"
+      espn: "por.1"
+    odds:
+      the_odds_api: soccer_portugal_primeira_liga
+
+  # --- Competiciones UEFA --------------------------------------------------
+  # Sin cuotas historicas en football-data.co.uk y con muestra por equipo baja:
+  # es esperable que muchas senales caigan en tier bajo o descartadas.
+  - id: uefa-champions-league
+    name: UEFA Champions League
+    country: Europe
+    sport: football
+    tier: 1
+    season_start_month: 9
+    season_end_month: 5
+    sources:
+      soccerdata_key: "INT-Champions League"
+      fbref: "Champions League"
+      understat: null
+      club_elo: null           # Club Elo es por liga domestica
+      match_history: null      # football-data.co.uk no cubre UEFA
+      espn: "uefa.champions"
+    odds:
+      the_odds_api: soccer_uefa_champs_league
+
+  - id: uefa-europa-league
+    name: UEFA Europa League
+    country: Europe
+    sport: football
+    tier: 2
+    season_start_month: 9
+    season_end_month: 5
+    sources:
+      soccerdata_key: "INT-Europa League"
+      fbref: "Europa League"
+      understat: null
+      club_elo: null
+      match_history: null
+      espn: "uefa.europa"
+    odds:
+      the_odds_api: soccer_uefa_europa_league
+
+  - id: uefa-conference-league
+    name: UEFA Conference League
+    country: Europe
+    sport: football
+    tier: 3
+    season_start_month: 9
+    season_end_month: 5
+    sources:
+      soccerdata_key: "INT-Conference League"
+      fbref: "Conference League"
+      understat: null
+      club_elo: null
+      match_history: null
+      espn: "uefa.europa.conf"
+    odds:
+      the_odds_api: soccer_uefa_europa_conference_league
+
+  # --- Futbol colombiano ---------------------------------------------------
+  # No existe fuente abierta de cuotas historicas colombianas. El backtest de
+  # esta liga arranca con las cuotas que capturemos desde hoy en adelante.
+  - id: col-primera-a
+    name: Liga BetPlay Dimayor
+    country: Colombia
+    sport: football
+    tier: 1
+    season_start_month: 1
+    season_end_month: 12
+    sources:
+      soccerdata_key: "COL-Primera A"
+      fbref: "Primera A"
+      understat: null
+      club_elo: null
+      match_history: null
+      espn: "col.1"
+    odds:
+      the_odds_api: soccer_colombia_primera_a
+
+  # --- Deportes americanos -------------------------------------------------
+  - id: usa-nfl
+    name: NFL
+    country: USA
+    sport: american_football
+    tier: 1
+    season_start_month: 9
+    season_end_month: 2
+    sources:
+      nfl_data_py: true
+    odds:
+      the_odds_api: americanfootball_nfl
+
+  - id: usa-nba
+    name: NBA
+    country: USA
+    sport: basketball
+    tier: 1
+    season_start_month: 10
+    season_end_month: 6
+    sources:
+      sportsdataverse: nba
+    odds:
+      the_odds_api: basketball_nba
+
+  - id: usa-mlb
+    name: MLB
+    country: USA
+    sport: baseball
+    tier: 1
+    season_start_month: 3
+    season_end_month: 10
+    sources:
+      pybaseball: true
+    odds:
+      the_odds_api: baseball_mlb
+
+  - id: usa-nhl
+    name: NHL
+    country: USA
+    sport: ice_hockey
+    tier: 1
+    season_start_month: 10
+    season_end_month: 6
+    sources:
+      sportsdataverse: nhl
+    odds:
+      the_odds_api: icehockey_nhl

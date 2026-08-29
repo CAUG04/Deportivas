@@ -35,8 +35,10 @@ from deportivas.storage.unit_of_work import BufferedUnitOfWork
 app = typer.Typer(help="Ingesta, features y backtest de la plataforma de pronosticos.")
 ingest_app = typer.Typer(help="Un comando por adaptador de fuente.")
 features_app = typer.Typer(help="Un comando por pipeline de features (uno por deporte).")
+models_app = typer.Typer(help="Un comando por modelo entrenado (walk-forward por temporada).")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(features_app, name="features")
+app.add_typer(models_app, name="models")
 
 
 def _seasons_list(seasons: str) -> list[str]:
@@ -356,6 +358,28 @@ def compute_mlb_features_command(competition_id: CompetitionId) -> None:
 
     written = compute_and_write_mlb_features(competition_id)
     typer.echo(f"mlb_v1: {written} filas escritas")
+
+
+@models_app.command("train-football")
+def train_football_model_command(
+    competition_id: CompetitionId,
+    calibration_method: Annotated[
+        str | None,
+        typer.Option(help="isotonic | platt. Sin especificar, usa config/thresholds.yaml"),
+    ] = None,
+) -> None:
+    """Poisson bivariante walk-forward por temporada -> model_registry + predictions
+    (1x2, over_under, btts). Requiere que fixtures ya este ingerido para esta
+    competicion, con al menos dos temporadas terminadas."""
+    from deportivas.models.football.train import compute_and_write_football_models
+
+    written = compute_and_write_football_models(
+        competition_id, calibration_method=calibration_method
+    )
+    if not written:
+        typer.echo("football poisson: 0 ventanas entrenadas (datos insuficientes)")
+        return
+    typer.echo(f"football poisson: {len(written)} ventana(s), {sum(written)} filas de predicciones")
 
 
 @app.command("seed-competitions")

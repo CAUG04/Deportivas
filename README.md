@@ -78,6 +78,21 @@ abajo para qué se simplificó y por qué.
   `fixtures` — la única señal por partido ingerida hasta ahora para estos
   tres deportes. Comparten el mismo módulo (`features/rest_and_margin.py`).
 
+**Fase 3 — Modelos (en curso).** Núcleo compartido (`src/deportivas/models/`):
+ventanas walk-forward por temporada (`walkforward.py`, regla #3), calibración
+isotónica/Platt ajustada solo con datos de entrenamiento (`calibration.py`,
+regla #4), y Brier score/log loss/curva de fiabilidad (`metrics.py`). Primer
+modelo real: **fútbol**, un Poisson bivariante (`models/football/`) que
+reutiliza el mismo ajuste de GLM que la feature `strength.py`
+(`features/football/dixon_coles_glm.py`, ahora compartido) pero como modelo
+predictivo — con `home_advantage` e intercepto — en vez de una calificación.
+Cada partido produce una matriz de goles de la que se leen **1x2**,
+**over/under** y **btts** (`config/markets.yaml`'s `derived_from:
+score_matrix`), con una fila en `model_registry` por ventana (métricas por
+temporada de validación) y una fila en `predictions` por partido, mercado,
+selección y línea. Ver [alcance de la Fase 3](#alcance-de-la-fase-3) para
+qué queda fuera todavía (modelos de NFL/NBA/NHL/MLB, hándicap asiático).
+
 ## Cobertura objetivo
 
 - **Fútbol europeo:** Premier League, La Liga, Serie A, Bundesliga,
@@ -172,6 +187,32 @@ profundidad según qué datos ya están ingeridos:
   persiste con su `as_of_timestamp` — la simplificación está en qué señales
   entran al vector, nunca en la disciplina de cuándo se calculan.
 
+## Alcance de la Fase 3
+
+- **Solo fútbol por ahora.** El modelo Poisson (`models/football/`) es lo que
+  se propuso explícitamente y se aprobó para este primer corte de la Fase 3.
+  Modelos para NFL/NBA/NHL/MLB (moneyline/spread/total — `derived_from:
+  classifier` / `margin_regression` en `config/markets.yaml`, un enfoque
+  distinto al de matriz de goles) quedan para una siguiente entrega dentro
+  de la misma fase, no descartados.
+- **Poisson independiente, no Dixon-Coles completo.** Sin el ajuste tau de
+  baja puntuación (0-0/1-0/0-1/1-1) del paper original — la misma
+  simplificación que `dixon_coles_glm.py` ya nombra en su propio docstring.
+  Es una razón conocida por la que los empates suelen quedar
+  sub-estimados; la curva de fiabilidad por ventana en `model_registry` es
+  justamente lo que permite verlo, no algo escondido.
+- **`asian_handicap` queda fuera**, aunque `config/markets.yaml` también lo
+  marca `derived_from: score_matrix`. Su liquidación con push y medio-gane
+  pertenece a la fase de señales/backtest (donde vive `RESULTS.outcome`),
+  no al entrenamiento del modelo.
+- **Calibración in-sample dentro de la ventana de entrenamiento**, no
+  validación cruzada. Ajustar el calibrador con predicciones
+  cross-validated dentro de la propia ventana de entrenamiento sería más
+  riguroso; queda como mejora futura documentada, no como una limitación
+  escondida — la validación *fuera* de muestra (lo que de verdad importa
+  para no hacer trampa) sigue siendo estrictamente walk-forward por
+  temporada.
+
 ## CLI de ingesta
 
 ```bash
@@ -207,6 +248,25 @@ Cada comando recalcula el vector completo de esa competición y lo escribe
 bajo su propio `feature_set` (`football_v1`, `nfl_v1`, ...) — re-ejecutarlo
 tras ingerir partidos nuevos es idempotente (`write_features` hace upsert
 sobre `(fixture_id, feature_set)`).
+
+## CLI de modelos
+
+```bash
+uv run deportivas models --help                # lista cada modelo como comando
+
+# Requiere que fixtures ya este ingerido, con al menos dos temporadas
+# terminadas (una para entrenar, una para validar).
+uv run deportivas models train-football --competition-id eng-premier-league
+
+# Metodo de calibracion explicito en vez del de config/thresholds.yaml:
+uv run deportivas models train-football \
+  --competition-id eng-premier-league --calibration-method platt
+```
+
+A diferencia de `features compute-...`, esto **no** es idempotente por
+diseño: `model_registry` es `append_only` (una fila por corrida de
+entrenamiento, nunca sobreescrita) para conservar el historial completo de
+cada ventana entrenada, incluso si se re-ejecuta el mismo comando dos veces.
 
 ## Arquitectura de datos
 
@@ -314,8 +374,13 @@ src/deportivas/
     football/                Elo, ataque/defensa (GLM), xG rolling, descanso, opponent_adjusted
     nfl/                     EPA/jugada rolling, descanso, DVOA aproximado
     nba/ nhl/ mlb/           pipeline.py sobre rest_and_margin.py, config por deporte
-  cli.py                   Un comando por adaptador de ingesta y por pipeline de features
-  models/ backtest/ signals/ api/ export/   (Fase 3+)
+  models/
+    walkforward.py           Ventanas walk-forward por temporada (regla #3)
+    calibration.py           Calibracion isotonica/Platt, solo con datos de entrenamiento
+    metrics.py                Brier score, log loss, curva de fiabilidad
+    football/                 Poisson bivariante: matriz de goles -> 1x2/over_under/btts
+  cli.py                   Un comando por adaptador de ingesta, pipeline de features y modelo
+  backtest/ signals/ api/ export/   (Fase 4+)
 alembic/                  Migraciones sobre la metadata de contracts/
 frontend/                 React + Vite + TS + Tailwind (Fase 7)
 tests/

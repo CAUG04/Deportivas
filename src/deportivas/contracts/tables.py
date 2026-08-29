@@ -233,7 +233,13 @@ MODEL_REGISTRY = TableSpec(
 
 PREDICTIONS = TableSpec(
     name="predictions",
-    description="Probabilidad cruda y calibrada por partido, mercado y seleccion",
+    description=(
+        "Probabilidad cruda y calibrada por partido, mercado y seleccion. "
+        "'id' es la clave natural real (no la tupla de columnas de negocio) "
+        "porque 'line' distingue predicciones del mismo mercado/seleccion "
+        "(over 1.5 vs. over 2.5) y una clave natural no puede tener un "
+        "componente nullable — ver el docstring de modulo sobre ids surrogados"
+    ),
     columns=(
         C("id", T.STR, primary_key=True, max_length=64),
         C("fixture_id", T.STR, foreign_key="fixtures.id", max_length=64),
@@ -259,7 +265,7 @@ PREDICTIONS = TableSpec(
         C("predicted_at", T.TIMESTAMP),
         *_ingestion_columns(),
     ),
-    natural_key=("fixture_id", "model_name", "model_version", "market", "selection"),
+    natural_key=("id",),
     indexes=(IndexSpec("ix_predictions_fixture", ("fixture_id", "market")),),
     partition_by=("competition_id", "season"),
 )

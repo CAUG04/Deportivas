@@ -82,7 +82,7 @@ warn_unreachable = true
 disallow_any_generics = false
 
 [[tool.mypy.overrides]]
-module = ["soccerdata.*", "nfl_data_py.*", "pybaseball.*", "sportsdataverse.*", "lightgbm.*", "statsmodels.*", "duckdb.*", "pandera.*", "pyarrow.*"]
+module = ["soccerdata.*", "nfl_data_py.*", "pybaseball.*", "sportsdataverse.*", "lightgbm.*", "statsmodels.*", "duckdb.*", "pandera.*", "pyarrow.*", "sklearn.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

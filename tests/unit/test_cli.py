@@ -477,3 +477,87 @@ def test_team_match_stats_table_used_by_fbref_stats_and_understat(tmp_path: Path
     """Sanity check that both adapters' CLI commands target the same table
     (proves the shared TEAM_MATCH_STATS import alias is wired correctly)."""
     assert TEAM_MATCH_STATS.name == "team_match_stats"
+
+
+def test_compute_football_features_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> int:
+        calls["competition_id"] = competition_id
+        return 3
+
+    monkeypatch.setattr(
+        "deportivas.features.football.pipeline.compute_and_write_football_features", _fake
+    )
+
+    result = runner.invoke(
+        app, ["features", "compute-football", "--competition-id", "eng-premier-league"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "eng-premier-league"
+    assert "football_v1: 3 filas escritas" in result.output
+
+
+def test_compute_nfl_features_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> int:
+        calls["competition_id"] = competition_id
+        return 5
+
+    monkeypatch.setattr("deportivas.features.nfl.pipeline.compute_and_write_nfl_features", _fake)
+
+    result = runner.invoke(app, ["features", "compute-nfl", "--competition-id", "usa-nfl"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "usa-nfl"
+    assert "nfl_v1: 5 filas escritas" in result.output
+
+
+def test_compute_nba_features_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> int:
+        calls["competition_id"] = competition_id
+        return 7
+
+    monkeypatch.setattr("deportivas.features.nba.pipeline.compute_and_write_nba_features", _fake)
+
+    result = runner.invoke(app, ["features", "compute-nba", "--competition-id", "usa-nba"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "usa-nba"
+    assert "nba_v1: 7 filas escritas" in result.output
+
+
+def test_compute_nhl_features_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> int:
+        calls["competition_id"] = competition_id
+        return 9
+
+    monkeypatch.setattr("deportivas.features.nhl.pipeline.compute_and_write_nhl_features", _fake)
+
+    result = runner.invoke(app, ["features", "compute-nhl", "--competition-id", "usa-nhl"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "usa-nhl"
+    assert "nhl_v1: 9 filas escritas" in result.output
+
+
+def test_compute_mlb_features_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> int:
+        calls["competition_id"] = competition_id
+        return 11
+
+    monkeypatch.setattr("deportivas.features.mlb.pipeline.compute_and_write_mlb_features", _fake)
+
+    result = runner.invoke(app, ["features", "compute-mlb", "--competition-id", "usa-mlb"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "usa-mlb"
+    assert "mlb_v1: 11 filas escritas" in result.output

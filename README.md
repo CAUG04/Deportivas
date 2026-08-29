@@ -50,6 +50,34 @@ y un adaptador por fuente detrás de la interfaz común `DataSource`
 expone cada adaptador como comando. Ver [limitaciones conocidas](#limitaciones-conocidas-de-la-fase-1)
 abajo — documentadas, no escondidas.
 
+**Fase 2 — Features.** Un pipeline de features real y punto-en-tiempo por
+cada uno de los 5 deportes (`src/deportivas/features/`), todos con la misma
+disciplina: procesan los partidos en orden cronológico, cada fila lleva
+`as_of_timestamp` (nunca "ahora", sino el límite real de información
+usada), y `domain/leakage.py` bloquea cualquier escritura que lo viole —
+`features/writer.py` es el único punto de entrada a la tabla `features` y
+lo llama siempre. Un CLI (`deportivas features compute-...`) expone cada
+pipeline como comando. Ver [alcance de la Fase 2](#alcance-de-la-fase-2)
+abajo para qué se simplificó y por qué.
+
+- **`football_v1`** (`features/football/`): Elo con ventaja de localía,
+  ataque/defensa estilo Dixon-Coles (GLM de Poisson, reajustado cada N
+  partidos), xG rolling con decaimiento exponencial (ventanas 5/10/20),
+  descanso y congestión de calendario, y defensa ajustada por la fuerza del
+  rival — cinco módulos combinados en un solo vector por partido
+  (`pipeline.py`).
+- **`nfl_v1`** (`features/nfl/`): EPA/jugada y tasa de éxito rolling,
+  ofensivos y defensivos (agregados desde play-by-play de nflfastR vía
+  `nfl_data_py`, tabla nueva `nfl_team_game_stats`), días de descanso, y una
+  "DVOA aproximada" — una transformación simple sobre el EPA rolling
+  (ataque propio vs. defensa típica del rival), no la metodología real de
+  Football Outsiders.
+- **`nba_v1`, `nhl_v1`, `mlb_v1`** (`features/nba/`, `features/nhl/`,
+  `features/mlb/`): descanso, back-to-back (configurable por deporte) y
+  margen de anotación rolling, calculados directamente sobre el marcador de
+  `fixtures` — la única señal por partido ingerida hasta ahora para estos
+  tres deportes. Comparten el mismo módulo (`features/rest_and_margin.py`).
+
 ## Cobertura objetivo
 
 - **Fútbol europeo:** Premier League, La Liga, Serie A, Bundesliga,
@@ -119,6 +147,31 @@ visible a una silenciosa:
   kickoff. Documentado en el código (`is_closing` sigue siendo fiable; el
   timestamp exacto no). The Odds API sí captura timestamps reales.
 
+## Alcance de la Fase 2
+
+Documentado explícitamente porque el proyecto prefiere una simplificación
+visible a una silenciosa — el usuario pidió explícitamente construir los 5
+deportes ya en esta fase, y así se hizo, pero con distinto nivel de
+profundidad según qué datos ya están ingeridos:
+
+- **DVOA aproximado (NFL) no es DVOA real.** La metodología real de Football
+  Outsiders es una regresión iterativa de fuerza de rival sobre toda la liga,
+  con valores de jugada situacionalmente neutrales y ponderación semana a
+  semana. `dvoa_approx.py` es una transformación mucho más simple y explícita
+  sobre el EPA rolling ya calculado (ataque propio vs. defensa típica de
+  *este* rival concreto) — un proxy razonable, no una reimplementación.
+- **NBA/NHL/MLB: sin rating ajustado por posesión ni por pitcheo.** Ninguno
+  de los tres tiene boxscore ni play-by-play ingerido todavía (Fase 1 solo
+  trajo calendario + marcador vía `sportsdataverse`/`pybaseball`), así que
+  un net rating ajustado por pace, o el abridor probable de MLB, no son
+  viables con lo que hay en la base hoy. `rest_and_margin.py` calcula lo que
+  sí es real con el marcador final: descanso, back-to-back y margen de
+  anotación rolling.
+- **Ninguna feature de estas tres se recalcula sobre la marcha.** Igual que
+  fútbol y NFL, cada vector se calcula una vez, en orden walk-forward, y se
+  persiste con su `as_of_timestamp` — la simplificación está en qué señales
+  entran al vector, nunca en la disciplina de cuándo se calculan.
+
 ## CLI de ingesta
 
 ```bash
@@ -135,6 +188,25 @@ Backfill (histórico, `--seasons` explícito) e ingesta incremental son el
 mismo comando con una lista de temporadas distinta — la Fase 8 es la que
 programa las corridas diarias de "temporada actual"; este CLI no adivina
 ventanas de fechas por su cuenta.
+
+## CLI de features
+
+```bash
+uv run deportivas features --help              # lista cada pipeline como comando
+
+# Requiere que fixtures (y, para football/NFL, team_match_stats /
+# nfl_team_game_stats) ya esten ingeridos para esa competicion.
+uv run deportivas features compute-football --competition-id eng-premier-league
+uv run deportivas features compute-nfl --competition-id usa-nfl
+uv run deportivas features compute-nba --competition-id usa-nba
+uv run deportivas features compute-nhl --competition-id usa-nhl
+uv run deportivas features compute-mlb --competition-id usa-mlb
+```
+
+Cada comando recalcula el vector completo de esa competición y lo escribe
+bajo su propio `feature_set` (`football_v1`, `nfl_v1`, ...) — re-ejecutarlo
+tras ingerir partidos nuevos es idempotente (`write_features` hace upsert
+sobre `(fixture_id, feature_set)`).
 
 ## Arquitectura de datos
 
@@ -234,8 +306,16 @@ src/deportivas/
     sources/                 Un adaptador por fuente (fbref, understat, espn,
                               footballdata, nfl, sportsdataverse_source,
                               pybaseball_source, theoddsapi)
-  cli.py                   Un comando por adaptador
-  features/ models/ backtest/ signals/ api/ export/   (Fase 2+)
+  features/
+    asof.py                  Carga fixtures/stats punto-en-tiempo, dedup por fuente
+    writer.py                Unico punto de escritura a features, bloqueado por leakage.py
+    merge.py                 Fusiona los vectores de varios modulos en uno por partido
+    rest_and_margin.py       Descanso/back-to-back/margen rolling (NBA, NHL, MLB)
+    football/                Elo, ataque/defensa (GLM), xG rolling, descanso, opponent_adjusted
+    nfl/                     EPA/jugada rolling, descanso, DVOA aproximado
+    nba/ nhl/ mlb/           pipeline.py sobre rest_and_margin.py, config por deporte
+  cli.py                   Un comando por adaptador de ingesta y por pipeline de features
+  models/ backtest/ signals/ api/ export/   (Fase 3+)
 alembic/                  Migraciones sobre la metadata de contracts/
 frontend/                 React + Vite + TS + Tailwind (Fase 7)
 tests/

@@ -34,7 +34,9 @@ from deportivas.storage.unit_of_work import BufferedUnitOfWork
 
 app = typer.Typer(help="Ingesta, features y backtest de la plataforma de pronosticos.")
 ingest_app = typer.Typer(help="Un comando por adaptador de fuente.")
+features_app = typer.Typer(help="Un comando por pipeline de features (uno por deporte).")
 app.add_typer(ingest_app, name="ingest")
+app.add_typer(features_app, name="features")
 
 
 def _seasons_list(seasons: str) -> list[str]:
@@ -309,6 +311,51 @@ def odds_snapshot(
         competition_id=competition_id, sport_key=sport_key, season=season, market_map=parsed_map
     )
     _persist(ODDS_SNAPSHOTS, df, label="theoddsapi odds")
+
+
+@features_app.command("compute-football")
+def compute_football_features_command(competition_id: CompetitionId) -> None:
+    """Elo, ataque/defensa, xG rolling, descanso y congestion -> features (football_v1)."""
+    from deportivas.features.football.pipeline import compute_and_write_football_features
+
+    written = compute_and_write_football_features(competition_id)
+    typer.echo(f"football_v1: {written} filas escritas")
+
+
+@features_app.command("compute-nfl")
+def compute_nfl_features_command(competition_id: CompetitionId) -> None:
+    """EPA/jugada, success rate, descanso y DVOA aproximado -> features (nfl_v1)."""
+    from deportivas.features.nfl.pipeline import compute_and_write_nfl_features
+
+    written = compute_and_write_nfl_features(competition_id)
+    typer.echo(f"nfl_v1: {written} filas escritas")
+
+
+@features_app.command("compute-nba")
+def compute_nba_features_command(competition_id: CompetitionId) -> None:
+    """Descanso, back-to-back y margen de anotacion rolling -> features (nba_v1)."""
+    from deportivas.features.nba.pipeline import compute_and_write_nba_features
+
+    written = compute_and_write_nba_features(competition_id)
+    typer.echo(f"nba_v1: {written} filas escritas")
+
+
+@features_app.command("compute-nhl")
+def compute_nhl_features_command(competition_id: CompetitionId) -> None:
+    """Descanso, back-to-back y margen de anotacion rolling -> features (nhl_v1)."""
+    from deportivas.features.nhl.pipeline import compute_and_write_nhl_features
+
+    written = compute_and_write_nhl_features(competition_id)
+    typer.echo(f"nhl_v1: {written} filas escritas")
+
+
+@features_app.command("compute-mlb")
+def compute_mlb_features_command(competition_id: CompetitionId) -> None:
+    """Descanso, back-to-back (dobleheader) y margen de anotacion rolling -> features (mlb_v1)."""
+    from deportivas.features.mlb.pipeline import compute_and_write_mlb_features
+
+    written = compute_and_write_mlb_features(competition_id)
+    typer.echo(f"mlb_v1: {written} filas escritas")
 
 
 @app.command("seed-competitions")

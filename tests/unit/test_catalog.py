@@ -44,6 +44,27 @@ def test_real_markets_yaml_loads() -> None:
     assert catalog.get("moneyline").sports != (Sport.FOOTBALL,)
 
 
+def test_for_sport_returns_only_markets_applicable_to_that_sport() -> None:
+    load_markets.cache_clear()
+    catalog = load_markets()
+
+    football_markets = catalog.for_sport(Sport.FOOTBALL)
+
+    assert all(Sport.FOOTBALL in m.sports for m in football_markets)
+    assert {m.id for m in football_markets} >= {"1x2", "btts"}
+    assert "moneyline" not in {m.id for m in football_markets}
+
+
+def test_for_sport_excludes_markets_for_other_sports() -> None:
+    load_markets.cache_clear()
+    catalog = load_markets()
+
+    baseball_markets = catalog.for_sport(Sport.BASEBALL)
+
+    assert "1x2" not in {m.id for m in baseball_markets}
+    assert "spread" not in {m.id for m in baseball_markets}  # spread no aplica a baseball
+
+
 def test_real_thresholds_yaml_loads() -> None:
     load_thresholds.cache_clear()
     catalog = load_thresholds()

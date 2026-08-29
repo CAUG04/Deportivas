@@ -99,4 +99,12 @@ source = ["src/deportivas"]
 branch = true
 
 [tool.coverage.report]
-exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    # Solo el cuerpo "..." de un stub (Protocol, `def foo(): ...`) al final
+    # de linea - no "..." embebido en una anotacion como tuple[int, ...],
+    # que de otro modo excluiria por error la funcion entera que lo contiene.
+    "\\.\\.\\.\\s*$",
+]

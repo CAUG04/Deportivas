@@ -119,6 +119,154 @@ def test_to_fixtures_resolves_team_abbreviations(tmp_path: Path) -> None:
     assert fixtures.iloc[0]["away_team_id"] == "american_football:kc"
 
 
+def _play(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "game_id": "2025_10_KC_BUF",
+        "season": 2025,
+        "week": 10,
+        "home_team": "BUF",
+        "away_team": "KC",
+        "posteam": "BUF",
+        "defteam": "KC",
+        "play_type": "run",
+        "epa": 0.5,
+        "success": 1,
+    }
+    base.update(overrides)
+    return base
+
+
+def _fixtures_lookup_row(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "id": "fixture-buf-kc",
+        "competition_id": "usa-nfl",
+        "season": "2025",
+        "home_team_id": "american_football:buf",
+        "away_team_id": "american_football:kc",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_to_team_game_stats_aggregates_offense_and_defense_epa(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    plays = pd.DataFrame(
+        [
+            _play(posteam="BUF", defteam="KC", epa=0.5, success=1),
+            _play(posteam="BUF", defteam="KC", epa=0.3, success=0),
+            _play(posteam="KC", defteam="BUF", epa=-0.2, success=0),
+        ]
+    )
+    fixtures = pd.DataFrame([_fixtures_lookup_row()])
+
+    result = source._to_team_game_stats(plays, fixtures=fixtures)
+
+    buf = result[result["team_id"] == "american_football:buf"].iloc[0]
+    assert buf["offensive_plays"] == 2
+    assert buf["offensive_epa_per_play"] == pytest.approx(0.4)
+    assert buf["offensive_success_rate"] == pytest.approx(0.5)
+    assert buf["defensive_plays"] == 1
+    assert buf["defensive_epa_per_play_allowed"] == pytest.approx(-0.2)
+    assert bool(buf["is_home"]) is True
+
+    kc = result[result["team_id"] == "american_football:kc"].iloc[0]
+    assert kc["offensive_plays"] == 1
+    assert kc["defensive_plays"] == 2
+    assert bool(kc["is_home"]) is False
+
+
+def test_to_team_game_stats_excludes_non_scrimmage_plays(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    plays = pd.DataFrame(
+        [
+            _play(posteam="BUF", defteam="KC", play_type="punt", epa=5.0),
+            _play(posteam="BUF", defteam="KC", play_type="run", epa=0.5, success=1),
+        ]
+    )
+    fixtures = pd.DataFrame([_fixtures_lookup_row()])
+
+    result = source._to_team_game_stats(plays, fixtures=fixtures)
+
+    buf = result[result["team_id"] == "american_football:buf"].iloc[0]
+    assert buf["offensive_plays"] == 1
+    assert buf["offensive_epa_per_play"] == pytest.approx(0.5)
+
+
+def test_to_team_game_stats_excludes_plays_without_epa(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    plays = pd.DataFrame(
+        [
+            _play(posteam="BUF", defteam="KC", epa=None),
+            _play(posteam="BUF", defteam="KC", epa=0.5, success=1),
+        ]
+    )
+    fixtures = pd.DataFrame([_fixtures_lookup_row()])
+
+    result = source._to_team_game_stats(plays, fixtures=fixtures)
+
+    buf = result[result["team_id"] == "american_football:buf"].iloc[0]
+    assert buf["offensive_plays"] == 1
+
+
+def test_to_team_game_stats_skips_games_without_a_matching_fixture(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    plays = pd.DataFrame([_play()])
+    fixtures = pd.DataFrame(
+        columns=["id", "competition_id", "season", "home_team_id", "away_team_id"]
+    )
+
+    result = source._to_team_game_stats(plays, fixtures=fixtures)
+
+    assert result.empty
+
+
+def test_to_team_game_stats_team_with_no_plays_gets_none_not_zero_division(tmp_path: Path) -> None:
+    """A team that never had the ball on offense (hypothetically) should read
+    as 'no data' (None), never a spurious 0.0 average."""
+    source = _source(tmp_path)
+    plays = pd.DataFrame([_play(posteam="BUF", defteam="KC", epa=0.5, success=1)])
+    fixtures = pd.DataFrame([_fixtures_lookup_row()])
+
+    result = source._to_team_game_stats(plays, fixtures=fixtures)
+
+    kc = result[result["team_id"] == "american_football:kc"].iloc[0]
+    assert kc["offensive_plays"] == 0
+    assert pd.isna(kc["offensive_epa_per_play"])
+
+
+def test_to_team_game_stats_no_scrimmage_plays_returns_empty(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    plays = pd.DataFrame([_play(play_type="kickoff", epa=None)])
+    fixtures = pd.DataFrame([_fixtures_lookup_row()])
+
+    result = source._to_team_game_stats(plays, fixtures=fixtures)
+
+    assert result.empty
+
+
+def test_fetch_team_game_stats_waits_archives_and_maps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source(tmp_path)
+    waits: list[float] = []
+
+    def fake_wait() -> float:
+        waits.append(1.0)
+        return 0.0
+
+    monkeypatch.setattr(source, "_wait", fake_wait)
+    monkeypatch.setattr(
+        "deportivas.ingest.sources.nfl.nfl.import_pbp_data",
+        lambda seasons, **kwargs: pd.DataFrame([_play()]),
+    )
+    fixtures = pd.DataFrame([_fixtures_lookup_row()])
+
+    result = source.fetch_team_game_stats(seasons=[2025], fixtures=fixtures)
+
+    assert len(waits) == 1
+    assert len(result) == 2
+
+
 def test_fetch_schedules_waits_archives_and_maps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -24,6 +24,7 @@ import typer
 from deportivas.config.catalog import load_competitions
 from deportivas.config.settings import get_settings
 from deportivas.contracts.tables import COMPETITIONS, FIXTURES, ODDS_SNAPSHOTS, TEAM_ALIASES, TEAMS
+from deportivas.contracts.tables import NFL_TEAM_GAME_STATS as NFL_TEAM_GAME_STATS_TABLE
 from deportivas.contracts.tables import TEAM_MATCH_STATS as TEAM_MATCH_STATS_TABLE
 from deportivas.contracts.types import TableSpec
 from deportivas.ingest.aliases import TeamAliasResolver
@@ -202,6 +203,25 @@ def nfl_schedule(competition_id: CompetitionId, seasons: Seasons) -> None:
     )
     df = source.fetch_schedules(competition_id=competition_id, seasons=_int_seasons_list(seasons))
     _persist(FIXTURES, df, label="nfl fixtures")
+
+
+@ingest_app.command("nfl-team-game-stats")
+def nfl_team_game_stats(competition_id: CompetitionId, seasons: Seasons) -> None:
+    """nfl_data_py: play-by-play agregado -> nfl_team_game_stats.
+
+    Requiere que ``nfl-schedule`` ya haya corrido para estas temporadas: cada
+    partido de play-by-play se enlaza a su fixture ya ingerido.
+    """
+    from deportivas.ingest.sources.nfl import NflSource
+
+    fixtures = get_table_repository(FIXTURES).read(filters={"competition_id": competition_id})
+    source = NflSource(
+        raw_repo=get_raw_document_repository(),
+        rate_limiter=RateLimiter(0.0),
+        aliases=_alias_resolver("american_football"),
+    )
+    df = source.fetch_team_game_stats(seasons=_int_seasons_list(seasons), fixtures=fixtures)
+    _persist(NFL_TEAM_GAME_STATS_TABLE, df, label="nfl team_game_stats")
 
 
 @ingest_app.command("nba-schedule")

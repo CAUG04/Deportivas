@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import pandas as pd
 
-from deportivas.contracts.tables import FIXTURES, TEAM_MATCH_STATS
+from deportivas.contracts.tables import FIXTURES, NFL_TEAM_GAME_STATS, TEAM_MATCH_STATS
+from deportivas.contracts.types import TableSpec
 from deportivas.storage.factory import get_table_repository
 
 DEFAULT_SOURCE_PRIORITY: tuple[str, ...] = ("fbref", "footballdata", "understat", "espn")
+NFL_SOURCE_PRIORITY: tuple[str, ...] = ("nfl",)
 
 
 def load_fixtures(competition_id: str) -> pd.DataFrame:
@@ -38,7 +40,24 @@ def load_team_match_stats(
     priority source that actually reported that match wins outright, rather
     than mixing individual columns across sources row by row.
     """
-    repo = get_table_repository(TEAM_MATCH_STATS)
+    return _load_one_row_per_fixture_team(TEAM_MATCH_STATS, competition_id, source_priority)
+
+
+def load_nfl_team_game_stats(
+    competition_id: str, *, source_priority: tuple[str, ...] = NFL_SOURCE_PRIORITY
+) -> pd.DataFrame:
+    """NFL team-game EPA/success-rate stats, one row per (fixture_id, team_id).
+
+    Same source-precedence contract as ``load_team_match_stats``, kept for a
+    future second play-by-play provider even though only ``nfl`` exists today.
+    """
+    return _load_one_row_per_fixture_team(NFL_TEAM_GAME_STATS, competition_id, source_priority)
+
+
+def _load_one_row_per_fixture_team(
+    table: TableSpec, competition_id: str, source_priority: tuple[str, ...]
+) -> pd.DataFrame:
+    repo = get_table_repository(table)
     df = repo.read(filters={"competition_id": competition_id})
     if df.empty:
         return df

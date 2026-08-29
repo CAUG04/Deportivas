@@ -133,6 +133,32 @@ TEAM_MATCH_STATS = TableSpec(
     partition_by=("competition_id", "season"),
 )
 
+NFL_TEAM_GAME_STATS = TableSpec(
+    name="nfl_team_game_stats",
+    description=(
+        "EPA/jugada y tasa de exito por equipo y partido de NFL, ofensiva y "
+        "defensiva, agregadas desde play-by-play (nflfastR via nfl_data_py). "
+        "'source' es parte de la clave por el mismo motivo que en team_match_stats"
+    ),
+    columns=(
+        C("fixture_id", T.STR, primary_key=True, foreign_key="fixtures.id", max_length=64),
+        C("team_id", T.STR, primary_key=True, foreign_key="teams.id", max_length=96),
+        C("source", T.STR, primary_key=True, max_length=64),
+        C("competition_id", T.STR, max_length=64),
+        C("season", T.STR, max_length=16),
+        C("is_home", T.BOOL),
+        C("offensive_plays", T.INT),
+        C("offensive_epa_per_play", T.FLOAT, nullable=True),
+        C("offensive_success_rate", T.FLOAT, nullable=True),
+        C("defensive_plays", T.INT),
+        C("defensive_epa_per_play_allowed", T.FLOAT, nullable=True),
+        C("defensive_success_rate_allowed", T.FLOAT, nullable=True),
+        C("ingested_at", T.TIMESTAMP),
+    ),
+    natural_key=("fixture_id", "team_id", "source"),
+    partition_by=("competition_id", "season"),
+)
+
 ODDS_SNAPSHOTS = TableSpec(
     name="odds_snapshots",
     description=(
@@ -327,6 +353,7 @@ SCHEMA = SchemaRegistry(
         TEAM_ALIASES,
         FIXTURES,
         TEAM_MATCH_STATS,
+        NFL_TEAM_GAME_STATS,
         ODDS_SNAPSHOTS,
         FEATURES,
         MODEL_REGISTRY,

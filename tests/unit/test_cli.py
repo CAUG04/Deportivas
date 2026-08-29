@@ -290,6 +290,45 @@ def test_nfl_schedule_command_parses_int_seasons(monkeypatch: pytest.MonkeyPatch
     assert calls["fetch"] == {"competition_id": "usa-nfl", "seasons": [2024, 2025]}
 
 
+def test_nfl_team_game_stats_command_reads_fixtures_and_calls_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ParquetTableRepository(FIXTURES, get_settings().parquet_dir).write(
+        pd.DataFrame([_fixture_row(id="fix1", competition_id="usa-nfl")])
+    )
+    calls: dict[str, object] = {}
+
+    class _FakeNflSource:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def fetch_team_game_stats(self, **kwargs: object) -> pd.DataFrame:
+            calls["fetch"] = kwargs
+            return pd.DataFrame()
+
+    monkeypatch.setattr("deportivas.ingest.sources.nfl.NflSource", _FakeNflSource)
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "nfl-team-game-stats",
+            "--competition-id",
+            "usa-nfl",
+            "--seasons",
+            "2025",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    fetch_kwargs = calls["fetch"]
+    assert isinstance(fetch_kwargs, dict)
+    assert fetch_kwargs["seasons"] == [2025]
+    fixtures_arg = fetch_kwargs["fixtures"]
+    assert isinstance(fixtures_arg, pd.DataFrame)
+    assert list(fixtures_arg["id"]) == ["fix1"]
+
+
 def test_nba_schedule_command(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeNbaSource:
         def __init__(self, **kwargs: object) -> None:

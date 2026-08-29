@@ -10,8 +10,8 @@ import pandas as pd
 import pytest
 
 from deportivas.config.settings import get_settings
-from deportivas.contracts.tables import FIXTURES, TEAM_MATCH_STATS
-from deportivas.features.asof import load_fixtures, load_team_match_stats
+from deportivas.contracts.tables import FIXTURES, NFL_TEAM_GAME_STATS, TEAM_MATCH_STATS
+from deportivas.features.asof import load_fixtures, load_nfl_team_game_stats, load_team_match_stats
 from deportivas.storage.duckdb_repo.repository import ParquetTableRepository
 
 
@@ -165,3 +165,61 @@ def test_load_team_match_stats_keeps_both_teams_of_same_fixture() -> None:
 
     assert len(result) == 2
     assert set(result["team_id"]) == {"football:arsenal", "football:chelsea"}
+
+
+def _nfl_stats_row(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "fixture_id": "fix1",
+        "team_id": "american_football:buf",
+        "source": "nfl",
+        "competition_id": "usa-nfl",
+        "season": "2025",
+        "is_home": True,
+        "offensive_plays": 60,
+        "offensive_epa_per_play": 0.1,
+        "offensive_success_rate": 0.45,
+        "defensive_plays": 58,
+        "defensive_epa_per_play_allowed": -0.05,
+        "defensive_success_rate_allowed": 0.4,
+        "ingested_at": datetime.now(UTC),
+    }
+    base.update(overrides)
+    return base
+
+
+def test_load_nfl_team_game_stats_filters_by_competition() -> None:
+    repo = ParquetTableRepository(NFL_TEAM_GAME_STATS, get_settings().parquet_dir)
+    repo.write(
+        pd.DataFrame(
+            [
+                _nfl_stats_row(fixture_id="usa", competition_id="usa-nfl"),
+                _nfl_stats_row(fixture_id="other", competition_id="other-league", season="2025"),
+            ]
+        )
+    )
+
+    result = load_nfl_team_game_stats("usa-nfl")
+
+    assert list(result["fixture_id"]) == ["usa"]
+
+
+def test_load_nfl_team_game_stats_dedupes_by_source_priority() -> None:
+    repo = ParquetTableRepository(NFL_TEAM_GAME_STATS, get_settings().parquet_dir)
+    repo.write(
+        pd.DataFrame(
+            [
+                _nfl_stats_row(source="nfl", offensive_epa_per_play=0.1),
+                _nfl_stats_row(source="some_future_source", offensive_epa_per_play=0.9),
+            ]
+        )
+    )
+
+    result = load_nfl_team_game_stats("usa-nfl")
+
+    assert len(result) == 1
+    assert result.iloc[0]["source"] == "nfl"
+
+
+def test_load_nfl_team_game_stats_empty_competition_returns_empty() -> None:
+    result = load_nfl_team_game_stats("does-not-exist")
+    assert result.empty

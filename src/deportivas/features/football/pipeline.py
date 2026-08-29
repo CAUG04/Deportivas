@@ -19,29 +19,10 @@ from deportivas.features.football.opponent_adjusted import compute_opponent_adju
 from deportivas.features.football.rest_congestion import compute_rest_and_congestion
 from deportivas.features.football.strength import compute_strength
 from deportivas.features.football.xg_rolling import compute_xg_rolling
+from deportivas.features.merge import merge_vectors
 from deportivas.features.writer import write_features
 
 FEATURE_SET = "football_v1"
-
-
-def _merge_vectors(base: pd.DataFrame, *extras: pd.DataFrame) -> pd.DataFrame:
-    """Left-to-right dict-merges each frame's ``vector`` column into ``base``'s,
-    joined on ``fixture_id``. Every frame must cover exactly the same set of
-    fixtures — true here since all five modules walk the same ``fixtures``."""
-    merged = base[["fixture_id", "as_of_timestamp", "vector"]].copy()
-    for extra in extras:
-        merged = merged.merge(
-            extra[["fixture_id", "vector"]], on="fixture_id", suffixes=("", "_extra")
-        )
-        merged["vector"] = pd.Series(
-            [
-                {**left, **right}
-                for left, right in zip(merged["vector"], merged["vector_extra"], strict=True)
-            ],
-            index=merged.index,
-        )
-        merged = merged.drop(columns="vector_extra")
-    return merged
 
 
 def compute_football_features(
@@ -58,7 +39,7 @@ def compute_football_features(
     strength = compute_strength(fixtures)
     opponent_adjusted = compute_opponent_adjusted_defense(fixtures, team_match_stats, strength)
 
-    merged = _merge_vectors(elo, rest, xg, strength, opponent_adjusted)
+    merged = merge_vectors(elo, rest, xg, strength, opponent_adjusted)
     fixture_meta = fixtures[["id", "competition_id", "season"]].rename(columns={"id": "fixture_id"})
     return merged.merge(fixture_meta, on="fixture_id")
 

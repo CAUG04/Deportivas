@@ -34,6 +34,26 @@ if TYPE_CHECKING:
 
 _EASTERN = ZoneInfo("America/New_York")
 
+# Solo las columnas que _to_team_game_stats necesita: nfl_data_py.import_pbp_data
+# trae cientos de columnas por defecto y descargarlas todas es lento e innecesario.
+PBP_COLUMNS: tuple[str, ...] = (
+    "game_id",
+    "season",
+    "week",
+    "home_team",
+    "away_team",
+    "posteam",
+    "defteam",
+    "play_type",
+    "epa",
+    "success",
+)
+
+# nflfastR ya distingue jugadas "de verdad" (pass/run) de kickoffs, punts,
+# penalizaciones sin jugada, etc. EPA y success solo tienen sentido futbolistico
+# sobre estas dos.
+_SCRIMMAGE_PLAY_TYPES = frozenset({"pass", "run"})
+
 
 class NflSource(DataSource):
     name = "nfl"
@@ -95,6 +115,96 @@ class NflSource(DataSource):
                 }
             )
         return pd.DataFrame(rows)
+
+    def fetch_team_game_stats(self, *, seasons: list[int], fixtures: pd.DataFrame) -> pd.DataFrame:
+        """Returns rows shaped for the ``nfl_team_game_stats`` table.
+
+        ``fixtures`` must already hold this competition's rows for ``seasons``
+        (``deportivas.features.asof.load_fixtures``, or an equivalent read of
+        the ``fixtures`` table) — play-by-play keys each game by nflfastR's
+        own ``game_id``, not our deterministic fixture id, so matching a play
+        back to a fixture goes through (season, home_team_id, away_team_id)
+        instead, which is unique within a season's regular NFL schedule.
+        """
+        self._wait()
+        raw = nfl.import_pbp_data(seasons, columns=list(PBP_COLUMNS), downcast=True)
+        self._archive_bytes(
+            endpoint="import_pbp_data",
+            params={"seasons": seasons},
+            content=raw.to_parquet(),
+            content_type="application/octet-stream",
+            status_code=None,
+        )
+        return self._to_team_game_stats(raw, fixtures=fixtures)
+
+    def _to_team_game_stats(self, raw: pd.DataFrame, *, fixtures: pd.DataFrame) -> pd.DataFrame:
+        now = datetime.now(UTC)
+        plays = raw[raw["play_type"].isin(_SCRIMMAGE_PLAY_TYPES) & raw["epa"].notna()]
+        if plays.empty:
+            return pd.DataFrame()
+
+        games = plays.drop_duplicates("game_id")[["game_id", "season", "home_team", "away_team"]]
+        offense = _aggregate_side(plays, side_col="posteam")
+        defense = _aggregate_side(plays, side_col="defteam")
+        fixture_lookup = {
+            (str(row["season"]), row["home_team_id"], row["away_team_id"]): row
+            for row in fixtures.to_dict("records")
+        }
+
+        rows: list[dict[str, object]] = []
+        for game in games.to_dict("records"):
+            game_id = game["game_id"]
+            season = str(game["season"])
+            home_team_id = self._aliases.resolve("nfl", str(game["home_team"]))
+            away_team_id = self._aliases.resolve("nfl", str(game["away_team"]))
+            fixture = fixture_lookup.get((season, home_team_id, away_team_id))
+            if fixture is None:
+                continue  # partido sin fixture ingerido todavia (o de una temporada distinta)
+
+            for team_code, team_id, is_home in (
+                (game["home_team"], home_team_id, True),
+                (game["away_team"], away_team_id, False),
+            ):
+                off = offense.get((game_id, team_code))
+                deff = defense.get((game_id, team_code))
+                rows.append(
+                    {
+                        "fixture_id": fixture["id"],
+                        "team_id": team_id,
+                        "source": self.name,
+                        "competition_id": fixture["competition_id"],
+                        "season": season,
+                        "is_home": is_home,
+                        "offensive_plays": off["plays"] if off is not None else 0,
+                        "offensive_epa_per_play": off["epa"] if off is not None else None,
+                        "offensive_success_rate": off["success"] if off is not None else None,
+                        "defensive_plays": deff["plays"] if deff is not None else 0,
+                        "defensive_epa_per_play_allowed": deff["epa"] if deff is not None else None,
+                        "defensive_success_rate_allowed": deff["success"]
+                        if deff is not None
+                        else None,
+                        "ingested_at": now,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+
+def _aggregate_side(
+    plays: pd.DataFrame, *, side_col: str
+) -> dict[tuple[object, object], dict[str, object]]:
+    grouped = (
+        plays.groupby(["game_id", side_col])
+        .agg(epa=("epa", "mean"), success=("success", "mean"), plays=("epa", "size"))
+        .reset_index()
+    )
+    return {
+        (row["game_id"], row[side_col]): {
+            "epa": row["epa"],
+            "success": row["success"],
+            "plays": row["plays"],
+        }
+        for row in grouped.to_dict("records")
+    }
 
 
 def _combine_eastern(gameday: object, gametime: object) -> datetime | None:

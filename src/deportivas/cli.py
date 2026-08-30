@@ -324,6 +324,19 @@ def odds_snapshot(
     _persist(ODDS_SNAPSHOTS, df, label="theoddsapi odds")
 
 
+@ingest_app.command("mark-closing")
+def mark_closing_command(competition_id: CompetitionId) -> None:
+    """Marca is_closing=True sobre el ultimo snapshot antes del kickoff de
+    cada fixture ya arrancado -- optimizacion, no dependencia de
+    correctitud: backtest/settlement.py ya calcula el precio de cierre en
+    tiempo de lectura si esto nunca corre. Seguro de correr a diario contra
+    toda la competicion: salta los fixtures ya marcados."""
+    from deportivas.ingest.closing import mark_closing_lines
+
+    changed = mark_closing_lines(competition_id)
+    typer.echo(f"odds_snapshots: {changed} fila(s) marcadas is_closing")
+
+
 @features_app.command("compute-football")
 def compute_football_features_command(competition_id: CompetitionId) -> None:
     """Elo, ataque/defensa, xG rolling, descanso y congestion -> features (football_v1)."""

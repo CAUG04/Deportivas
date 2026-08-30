@@ -826,3 +826,21 @@ def test_export_run_command_defaults_to_every_competition(
     assert result.exit_code == 0, result.output
     assert calls["competition_ids"] is None
     assert "competitions: " in result.output
+
+
+def test_mark_closing_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> int:
+        calls["competition_id"] = competition_id
+        return 5
+
+    monkeypatch.setattr("deportivas.ingest.closing.mark_closing_lines", _fake)
+
+    result = runner.invoke(
+        app, ["ingest", "mark-closing", "--competition-id", "eng-premier-league"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "eng-premier-league"
+    assert "odds_snapshots: 5 fila(s) marcadas is_closing" in result.output

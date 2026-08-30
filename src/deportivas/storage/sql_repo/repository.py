@@ -9,6 +9,7 @@ runs on — see the README for the DuckDB-vs-Postgres split.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 import pandas as pd
@@ -80,6 +81,21 @@ class SqlTableRepository:
                 )
                 conn.execute(stmt)
         return len(valid)
+
+    def mark_closing(self, ids: Sequence[str]) -> int:
+        if "is_closing" not in self.spec.column_names:
+            raise ValueError(f"{self.spec.name}: no tiene columna is_closing")
+        if not ids:
+            return 0
+        with self._engine.begin() as conn:
+            stmt = (
+                sa.update(self._table)
+                .where(self._table.c.id.in_(ids))
+                .where(self._table.c.is_closing.is_(False))
+                .values(is_closing=True)
+            )
+            result = conn.execute(stmt)
+            return result.rowcount
 
     def read(
         self,

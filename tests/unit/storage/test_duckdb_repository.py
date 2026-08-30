@@ -141,12 +141,14 @@ def test_as_of_filters_on_temporal_column(tmp_path: Path) -> None:
                     "widget_id": "w1",
                     "captured_at": datetime(2026, 1, 1, tzinfo=UTC),
                     "payload": "early",
+                    "is_closing": False,
                 },
                 {
                     "id": "e2",
                     "widget_id": "w1",
                     "captured_at": datetime(2026, 1, 5, tzinfo=UTC),
                     "payload": "late",
+                    "is_closing": False,
                 },
             ]
         )
@@ -157,7 +159,11 @@ def test_as_of_filters_on_temporal_column(tmp_path: Path) -> None:
 
 def test_append_only_table_never_deduplicates(tmp_path: Path) -> None:
     repo = ParquetTableRepository(WIDGET_EVENTS, tmp_path, temporal_column="captured_at")
-    same_natural_key = {"widget_id": "w1", "captured_at": datetime(2026, 1, 1, tzinfo=UTC)}
+    same_natural_key = {
+        "widget_id": "w1",
+        "captured_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "is_closing": False,
+    }
     repo.write(pd.DataFrame([{"id": "e1", "payload": "first", **same_natural_key}]))
     # misma clave natural (widget_id, captured_at), id subrogado distinto:
     # asi es como dos capturas reales de la misma cuota en el mismo instante
@@ -166,6 +172,68 @@ def test_append_only_table_never_deduplicates(tmp_path: Path) -> None:
 
     result = repo.read()
     assert len(result) == 2
+
+
+def test_mark_closing_flags_only_the_given_ids(tmp_path: Path) -> None:
+    repo = ParquetTableRepository(WIDGET_EVENTS, tmp_path)
+    repo.write(
+        pd.DataFrame(
+            [
+                {
+                    "id": "e1",
+                    "widget_id": "w1",
+                    "captured_at": datetime(2026, 1, 1, tzinfo=UTC),
+                    "payload": "early",
+                    "is_closing": False,
+                },
+                {
+                    "id": "e2",
+                    "widget_id": "w1",
+                    "captured_at": datetime(2026, 1, 2, tzinfo=UTC),
+                    "payload": "late",
+                    "is_closing": False,
+                },
+            ]
+        )
+    )
+
+    changed = repo.mark_closing(["e2"])
+
+    assert changed == 1
+    result = repo.read().set_index("id")
+    assert not result.loc["e1", "is_closing"]
+    assert result.loc["e2", "is_closing"]
+
+
+def test_mark_closing_is_idempotent(tmp_path: Path) -> None:
+    repo = ParquetTableRepository(WIDGET_EVENTS, tmp_path)
+    repo.write(
+        pd.DataFrame(
+            [
+                {
+                    "id": "e1",
+                    "widget_id": "w1",
+                    "captured_at": datetime(2026, 1, 1, tzinfo=UTC),
+                    "payload": "x",
+                    "is_closing": False,
+                }
+            ]
+        )
+    )
+
+    assert repo.mark_closing(["e1"]) == 1
+    assert repo.mark_closing(["e1"]) == 0  # ya estaba marcado, no cuenta de nuevo
+
+
+def test_mark_closing_empty_ids_is_a_noop(tmp_path: Path) -> None:
+    repo = ParquetTableRepository(WIDGET_EVENTS, tmp_path)
+    assert repo.mark_closing([]) == 0
+
+
+def test_mark_closing_raises_without_is_closing_column(tmp_path: Path) -> None:
+    repo = ParquetTableRepository(WIDGETS, tmp_path)
+    with pytest.raises(ValueError, match="is_closing"):
+        repo.mark_closing(["w1"])
 
 
 def test_invalid_rows_are_rejected_and_valid_rows_still_written(tmp_path: Path) -> None:

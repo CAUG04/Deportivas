@@ -36,6 +36,7 @@ WIDGET_EVENTS = TableSpec(
         C("widget_id", T.STR, max_length=64),
         C("captured_at", T.TIMESTAMP),
         C("payload", T.STR, max_length=256),
+        C("is_closing", T.BOOL, description="Espeja odds_snapshots, para probar mark_closing"),
     ),
     natural_key=("widget_id", "captured_at"),
     append_only=True,

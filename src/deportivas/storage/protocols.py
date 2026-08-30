@@ -20,10 +20,21 @@ Two design choices worth calling out:
   ``raw_documents`` are append-only by design (a later snapshot must never
   overwrite an earlier one, or CLV becomes unrecoverable). ``write`` on those
   tables always inserts; a caller trying to "correct" a past snapshot is a bug.
+* **One narrow, deliberate exception to "append-only never updates":**
+  ``mark_closing``. Whether a captured price was the last one before kickoff
+  is metadata that can only be known in hindsight, once the fixture has
+  started and no further pre-kickoff snapshot can ever arrive — it was
+  never knowable at capture time, unlike every other column on the row.
+  Flagging it is not "correcting" a price (the price itself, and every
+  other snapshot's price, stays exactly as captured); ``backtest/settlement.py``'s
+  own runtime fallback (the latest snapshot at or before kickoff) already
+  covers CLV correctly without this flag ever being set, so calling it is
+  an optimization for the common case, never a correctness requirement.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -64,6 +75,17 @@ class TableRepository(Protocol):
         at that instant. This is the mechanism that makes point-in-time
         backtesting possible: the backtest never calls ``read`` without
         ``as_of`` on a temporal table.
+        """
+        ...
+
+    def mark_closing(self, ids: Sequence[str]) -> int:
+        """Sets ``is_closing = True`` on exactly the rows named by ``ids``
+        (the table's own primary key) — see the module docstring's "one
+        narrow, deliberate exception". Only ``odds_snapshots`` carries an
+        ``is_closing`` column; calling this on any other table raises
+        ``ValueError`` rather than silently doing nothing. Rows already
+        flagged don't count towards the returned total, so re-running
+        against the same ids is always cheap to observe.
         """
         ...
 

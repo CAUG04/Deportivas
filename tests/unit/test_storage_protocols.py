@@ -10,6 +10,7 @@ SQLAlchemy repositories built in Fase 1 from silently drifting apart.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -41,6 +42,9 @@ class _FakeTableRepo:
     ) -> pd.DataFrame:
         raise NotImplementedError
 
+    def mark_closing(self, ids: Sequence[str]) -> int:
+        raise NotImplementedError
+
 
 def test_fake_table_repo_satisfies_protocol() -> None:
     assert isinstance(_FakeTableRepo(), TableRepository)
@@ -57,6 +61,9 @@ def test_repo_missing_write_does_not_satisfy_protocol() -> None:
             columns: list[str] | None = None,
             as_of: datetime | None = None,
         ) -> pd.DataFrame:
+            raise NotImplementedError
+
+        def mark_closing(self, ids: Sequence[str]) -> int:
             raise NotImplementedError
 
     assert not isinstance(_Incomplete(), TableRepository)

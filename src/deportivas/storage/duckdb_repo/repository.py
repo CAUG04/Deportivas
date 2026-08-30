@@ -19,6 +19,7 @@ Parquet has no portable native JSON type.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
@@ -82,6 +83,26 @@ class ParquetTableRepository:
             parquet_io.write_parquet_atomic(path, table)
             written += len(group)
         return written
+
+    def mark_closing(self, ids: Sequence[str]) -> int:
+        if "is_closing" not in self.spec.column_names:
+            raise ValueError(f"{self.spec.name}: no tiene columna is_closing")
+        if not ids:
+            return 0
+        id_set = set(ids)
+        changed = 0
+        for path in parquet_io.existing_partition_files(self._base_dir, self.spec):
+            df = parquet_io.read_parquet(path, self.spec)
+            if df.empty:  # pragma: no cover - defensivo, write() nunca deja un archivo vacio
+                continue
+            mask = df["id"].isin(id_set) & ~df["is_closing"]
+            if not mask.any():
+                continue
+            df.loc[mask, "is_closing"] = True
+            changed += int(mask.sum())
+            table = dataframe_to_arrow(df, self.spec)
+            parquet_io.write_parquet_atomic(path, table)
+        return changed
 
     def _partition_groups(self, df: pd.DataFrame) -> list[tuple[dict[str, object], pd.DataFrame]]:
         if not self.spec.partition_by:

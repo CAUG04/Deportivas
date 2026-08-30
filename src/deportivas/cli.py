@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Annotated
 if TYPE_CHECKING:
     from deportivas.backtest.report import MetricSummary
 
+import json
+
 import pandas as pd
 import typer
 
@@ -577,6 +579,17 @@ def seed_competitions() -> None:
         for competition in load_competitions().competitions
     ]
     _persist(COMPETITIONS, pd.DataFrame(rows), label="competitions")
+
+
+@app.command("list-competitions")
+def list_competitions_command() -> None:
+    """Imprime como JSON las competiciones habilitadas de
+    config/competitions.yaml -- id, deporte, cadencia de refresco, fuentes y
+    cuotas -- lo que un workflow de automatizacion (Fase 8/9) recorre con
+    ``jq`` para saber que comando de ingesta correr por competicion, sin
+    parsear YAML a mano en bash."""
+    competitions = load_competitions().enabled
+    typer.echo(json.dumps([c.model_dump(mode="json") for c in competitions]))
 
 
 @app.command("current-seasons")

@@ -5,6 +5,7 @@ adapter's own external fetch, which is stubbed."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -844,6 +845,22 @@ def test_mark_closing_command(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, result.output
     assert calls["competition_id"] == "eng-premier-league"
     assert "odds_snapshots: 5 fila(s) marcadas is_closing" in result.output
+
+
+def test_list_competitions_command() -> None:
+    result = runner.invoke(app, ["list-competitions"])
+
+    assert result.exit_code == 0, result.output
+    competitions = json.loads(result.output)
+    assert isinstance(competitions, list)
+    assert all(c["enabled"] for c in competitions)
+    ids = {c["id"] for c in competitions}
+    assert "eng-premier-league" in ids
+    assert "usa-nfl" in ids
+    epl = next(c for c in competitions if c["id"] == "eng-premier-league")
+    assert epl["sport"] == "football"
+    assert epl["sources"]["fbref"] == "Premier League"
+    assert epl["odds"]["the_odds_api"] == "soccer_epl"
 
 
 def test_current_seasons_command() -> None:

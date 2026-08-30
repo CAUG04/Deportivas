@@ -789,3 +789,40 @@ def test_backtest_report_command_omits_empty_breakdowns(monkeypatch: pytest.Monk
     assert "sin datos liquidados" in result.output
     assert "-- por tier --" not in result.output
     assert "-- por mercado --" not in result.output
+
+
+def test_export_run_command_for_one_competition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> dict[str, Path]:
+        calls["competition_id"] = competition_id
+        return {"signals": tmp_path / "signals.json", "backtest": tmp_path / "backtest.json"}
+
+    monkeypatch.setattr("deportivas.export.json_export.export_competition", _fake)
+
+    result = runner.invoke(app, ["export", "run", "--competition-id", "eng-premier-league"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "eng-premier-league"
+    assert "signals: " in result.output
+    assert "backtest: " in result.output
+
+
+def test_export_run_command_defaults_to_every_competition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_ids: list[str] | None = None) -> dict[str, Path]:
+        calls["competition_ids"] = competition_ids
+        return {"competitions": tmp_path / "competitions.json"}
+
+    monkeypatch.setattr("deportivas.export.json_export.export_all", _fake)
+
+    result = runner.invoke(app, ["export", "run"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_ids"] is None
+    assert "competitions: " in result.output

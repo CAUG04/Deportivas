@@ -41,11 +41,13 @@ features_app = typer.Typer(help="Un comando por pipeline de features (uno por de
 models_app = typer.Typer(help="Un comando por modelo entrenado (walk-forward por temporada).")
 signals_app = typer.Typer(help="Generacion de senales a partir de predictions + odds_snapshots.")
 backtest_app = typer.Typer(help="Liquidacion de senales y reporte de CLV/ROI.")
+export_app = typer.Typer(help="Export estatico de JSON para el frontend (Fase 7).")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(features_app, name="features")
 app.add_typer(models_app, name="models")
 app.add_typer(signals_app, name="signals")
 app.add_typer(backtest_app, name="backtest")
+app.add_typer(export_app, name="export")
 
 
 def _seasons_list(seasons: str) -> list[str]:
@@ -524,6 +526,24 @@ def backtest_report_command(competition_id: CompetitionId) -> None:
     typer.echo("-- baselines (stake plano de 1 unidad) --")
     for name, summary in report.baselines.items():
         _echo_metric_summary(name, summary)
+
+
+@export_app.command("run")
+def export_run_command(
+    competition_id: Annotated[
+        str | None,
+        typer.Option(help="Si se omite, exporta todas las competiciones habilitadas."),
+    ] = None,
+) -> None:
+    """Escribe JSON pre-calculado (competitions, y signals/backtest por
+    competicion, con todos los tiers -incluido descartar-) bajo
+    frontend/public/data/ -- lo que el frontend estatico de la Fase 7
+    realmente consume, sin necesitar un servidor corriendo."""
+    from deportivas.export.json_export import export_all, export_competition
+
+    written = export_competition(competition_id) if competition_id is not None else export_all()
+    for label, path in written.items():
+        typer.echo(f"{label}: {path}")
 
 
 @app.command("seed-competitions")

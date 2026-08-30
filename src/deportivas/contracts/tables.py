@@ -274,7 +274,11 @@ SIGNALS = TableSpec(
     name="signals",
     description=(
         "Una apuesta senalada. tier='descartar' es una salida valida y se "
-        "persiste: saber a que no apostar es parte del producto"
+        "persiste: saber a que no apostar es parte del producto. 'id' es la "
+        "clave natural real (no la tupla de columnas de negocio) por la "
+        "misma razon que en predictions: 'line' distingue senales del mismo "
+        "mercado/seleccion y es nullable, asi que no puede ir en una clave "
+        "natural — ver el docstring de modulo sobre ids surrogados"
     ),
     columns=(
         C("id", T.STR, primary_key=True, max_length=64),
@@ -300,7 +304,7 @@ SIGNALS = TableSpec(
         C("created_at", T.TIMESTAMP),
         *_ingestion_columns(),
     ),
-    natural_key=("fixture_id", "market", "selection", "model_name", "model_version"),
+    natural_key=("id",),
     indexes=(IndexSpec("ix_signals_fixture_tier", ("fixture_id", "tier")),),
     partition_by=("competition_id", "season"),
 )

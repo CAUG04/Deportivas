@@ -711,3 +711,81 @@ def test_generate_signals_command(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, result.output
     assert calls["competition_id"] == "eng-premier-league"
     assert "signals: 42 fila(s) escritas" in result.output
+
+
+def test_settle_backtest_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> int:
+        calls["competition_id"] = competition_id
+        return 7
+
+    monkeypatch.setattr("deportivas.backtest.settlement.compute_and_write_results", _fake)
+
+    result = runner.invoke(app, ["backtest", "settle", "--competition-id", "eng-premier-league"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "eng-premier-league"
+    assert "results: 7 fila(s) escritas" in result.output
+
+
+def test_backtest_report_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    from deportivas.backtest.report import BacktestReport, MetricSummary
+
+    fake_report = BacktestReport(
+        overall=MetricSummary(n=10, mean_clv=0.032, clv_ci=(0.01, 0.05), mean_pnl=0.004, roi=0.021),
+        by_tier={"alta": MetricSummary(n=4, mean_clv=0.05, clv_ci=None, mean_pnl=0.01, roi=0.05)},
+        by_market={
+            "1x2": MetricSummary(n=10, mean_clv=0.032, clv_ci=None, mean_pnl=0.004, roi=0.021)
+        },
+        baselines={
+            "always_favourite": MetricSummary(
+                n=10, mean_clv=-0.01, clv_ci=None, mean_pnl=-0.02, roi=-0.02
+            ),
+            "random": MetricSummary(n=0, mean_clv=None, clv_ci=None, mean_pnl=0.0, roi=None),
+        },
+    )
+
+    def _fake(competition_id: str) -> BacktestReport:
+        return fake_report
+
+    monkeypatch.setattr("deportivas.backtest.report.build_backtest_report", _fake)
+
+    result = runner.invoke(app, ["backtest", "report", "--competition-id", "eng-premier-league"])
+
+    assert result.exit_code == 0, result.output
+    assert "-- global --" in result.output
+    assert "n=10" in result.output
+    assert "CLV medio=+3.20%" in result.output
+    assert "IC [+1.00%, +5.00%]" in result.output
+    assert "-- por tier --" in result.output
+    assert "alta:" in result.output
+    assert "-- por mercado --" in result.output
+    assert "1x2:" in result.output
+    assert "-- baselines" in result.output
+    assert "always_favourite:" in result.output
+    assert "random: sin datos liquidados" in result.output
+
+
+def test_backtest_report_command_omits_empty_breakdowns(monkeypatch: pytest.MonkeyPatch) -> None:
+    from deportivas.backtest.report import BacktestReport, MetricSummary
+
+    empty_report = BacktestReport(
+        overall=MetricSummary(n=0, mean_clv=None, clv_ci=None, mean_pnl=0.0, roi=None),
+        by_tier={},
+        by_market={},
+        baselines={},
+    )
+
+    def _fake(competition_id: str) -> BacktestReport:
+        return empty_report
+
+    monkeypatch.setattr("deportivas.backtest.report.build_backtest_report", _fake)
+
+    result = runner.invoke(app, ["backtest", "report", "--competition-id", "eng-premier-league"])
+
+    assert result.exit_code == 0, result.output
+    assert "-- global --" in result.output
+    assert "sin datos liquidados" in result.output
+    assert "-- por tier --" not in result.output
+    assert "-- por mercado --" not in result.output

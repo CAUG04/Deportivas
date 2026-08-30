@@ -16,7 +16,10 @@ competitions and sources, matching ``config/competitions.yaml``.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
+
+if TYPE_CHECKING:
+    from deportivas.backtest.report import MetricSummary
 
 import pandas as pd
 import typer
@@ -37,10 +40,12 @@ ingest_app = typer.Typer(help="Un comando por adaptador de fuente.")
 features_app = typer.Typer(help="Un comando por pipeline de features (uno por deporte).")
 models_app = typer.Typer(help="Un comando por modelo entrenado (walk-forward por temporada).")
 signals_app = typer.Typer(help="Generacion de senales a partir de predictions + odds_snapshots.")
+backtest_app = typer.Typer(help="Liquidacion de senales y reporte de CLV/ROI.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(features_app, name="features")
 app.add_typer(models_app, name="models")
 app.add_typer(signals_app, name="signals")
+app.add_typer(backtest_app, name="backtest")
 
 
 def _seasons_list(seasons: str) -> list[str]:
@@ -457,6 +462,68 @@ def generate_signals_command(competition_id: CompetitionId) -> None:
 
     written = compute_and_write_signals(competition_id)
     typer.echo(f"signals: {written} fila(s) escritas")
+
+
+def _format_pct(value: float | None) -> str:
+    return "sin datos" if value is None else f"{value:+.2%}"
+
+
+def _echo_metric_summary(label: str, summary: MetricSummary) -> None:
+    if summary.n == 0:
+        typer.echo(f"  {label}: sin datos liquidados")
+        return
+    ci_text = ""
+    if summary.clv_ci is not None:
+        lower, upper = summary.clv_ci
+        ci_text = f" (IC [{lower:+.2%}, {upper:+.2%}])"
+    typer.echo(
+        f"  {label}: n={summary.n}  CLV medio={_format_pct(summary.mean_clv)}{ci_text}  "
+        f"ROI={_format_pct(summary.roi)}"
+    )
+
+
+@backtest_app.command("settle")
+def settle_backtest_command(competition_id: CompetitionId) -> None:
+    """Liquida cada senal cuyo partido ya termino con marcador conocido:
+    outcome, pnl y CLV (cuota de entrada contra la de cierre) -> results.
+    Incluye las senales 'descartar'/'baja' (pnl siempre 0 porque no llevan
+    stake): su CLV es la verificacion honesta de si el sistema de tiers esta
+    descartando lo que debia. Requiere que ya existan signals (``deportivas
+    signals generate``) para esta competicion."""
+    from deportivas.backtest.settlement import compute_and_write_results
+
+    written = compute_and_write_results(competition_id)
+    typer.echo(f"results: {written} fila(s) escritas")
+
+
+@backtest_app.command("report")
+def backtest_report_command(competition_id: CompetitionId) -> None:
+    """CLV medio -la metrica principal del proyecto, no el pnl- y ROI,
+    globales y desglosados por tier y por mercado, junto con las baselines
+    always_favourite/random calculadas en caliente sobre los mismos
+    partidos. El intervalo de confianza de CLV se omite por debajo de
+    ``backtest.min_matches_per_window`` liquidaciones. Requiere haber
+    corrido ``deportivas backtest settle`` primero."""
+    from deportivas.backtest.report import build_backtest_report
+
+    report = build_backtest_report(competition_id)
+
+    typer.echo("-- global --")
+    _echo_metric_summary("total", report.overall)
+
+    if report.by_tier:
+        typer.echo("-- por tier --")
+        for tier, summary in report.by_tier.items():
+            _echo_metric_summary(tier, summary)
+
+    if report.by_market:
+        typer.echo("-- por mercado --")
+        for market, summary in report.by_market.items():
+            _echo_metric_summary(market, summary)
+
+    typer.echo("-- baselines (stake plano de 1 unidad) --")
+    for name, summary in report.baselines.items():
+        _echo_metric_summary(name, summary)
 
 
 @app.command("seed-competitions")

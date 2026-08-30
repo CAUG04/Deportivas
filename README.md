@@ -122,6 +122,27 @@ persiste igual que una apuesta accionable, no se descarta en silencio. Ver
 [alcance de la Fase 4](#alcance-de-la-fase-4) para las decisiones de diseño
 detrás de esa ventana de precio.
 
+**Fase 5 — Backtest.** `src/deportivas/backtest/` liquida las señales y mide
+si el sistema funciona, con **CLV como métrica principal** (no el pnl): un
+acierto de suerte o una mala racha mueven el pnl en cualquier dirección,
+pero el CLV pregunta algo que no depende de la varianza — ¿se movió el
+mercado para confirmar el precio que conseguimos, antes de que el partido
+siquiera empezara? `settlement.py` liquida cada señal cuyo partido ya
+terminó (incluidas las `descartar`/`baja`: su CLV es la verificación
+honesta de si el sistema de tiers está descartando lo que debía) contra la
+cuota de cierre del mismo bookmaker de entrada. `bootstrap.py` calcula el
+intervalo de confianza del CLV por remuestreo — nunca asumiendo una campana
+que una muestra chica y sesgada por unas pocas cuotas altas no tiene.
+`baselines.py` responde la pregunta que un edge real tiene que superar para
+valer algo: ¿qué hubiera devuelto apostar siempre al favorito, o al azar,
+sobre exactamente los mismos partidos, en el mismo instante de cuota que ya
+usó la señal real? `report.py` junta todo: CLV medio, su intervalo de
+confianza, pnl y ROI — global, por tier, por mercado y contra cada
+baseline. Ver [alcance de la Fase 5](#alcance-de-la-fase-5) para las
+decisiones de diseño (el precio de cierre sin el flag de Fase 8 todavía,
+el stake plano de las baselines, y qué significa aquí
+`min_matches_per_window`).
+
 ## Cobertura objetivo
 
 - **Fútbol europeo:** Premier League, La Liga, Serie A, Bundesliga,
@@ -285,10 +306,45 @@ profundidad según qué datos ya están ingeridos:
   Si dos filas comparten esa clave (posible porque `model_registry` es
   `append_only`, ver la Fase 3), gana la última en el orden de lectura del
   backend activo; no es un problema introducido aquí, y no se resuelve aquí.
-- **No hay backtest todavía.** `signals` registra la decisión (edge, tier,
-  stake) en el momento en que se genera, pero liquidar esa apuesta contra el
-  resultado real y calcular CLV (`results.clv`, la métrica principal del
-  proyecto) es la fase siguiente.
+- ~~No hay backtest todavía.~~ Resuelto en la Fase 5 (`backtest/settlement.py`
+  liquida `signals` contra `results.clv`) — ver más abajo.
+
+## Alcance de la Fase 5
+
+- **El precio de cierre cae al último snapshot pre-kickoff sin el flag de
+  Fase 8 todavía.** `results.clv` se mide contra una fila marcada
+  `is_closing=True`, pero ese flag lo pone un job de liquidación de la Fase
+  8 que corre después del kickoff y que todavía no existe. Mientras tanto,
+  `closing_price` cae al último precio capturado antes del kickoff para el
+  mismo bookmaker de entrada — la mejor aproximación disponible a "el precio
+  en el que se cerró el mercado", documentada como tal en el docstring de
+  `settlement.py`, no un dato inventado. En cuanto la Fase 8 empiece a
+  marcar `is_closing`, ese flag gana automáticamente sin tocar una línea de
+  código aquí.
+- **Las baselines usan un stake plano de 1 unidad**, no Kelly: no tienen una
+  probabilidad propia contra la cual dimensionar una fracción de Kelly. Por
+  eso su `pnl` medio ya *es* su ROI por apuesta, mientras que el ROI de la
+  estrategia real se calcula ponderado por `stake_fraction` — son dos
+  unidades distintas, comparables solo en CLV, no en pnl absoluto.
+- **Las baselines resuelven la selección sobre el mismo instante exacto de
+  cuota que ya usó la señal real** (mismo bookmaker, mismo `captured_at`),
+  nunca resolviendo el mercado de nuevo por su cuenta. Comparar contra una
+  cuota capturada en otro momento haría que cualquier diferencia de
+  desempeño fuera un artefacto de qué precio se miró, no de las estrategias.
+- **`min_matches_per_window` se reutiliza como el mínimo de apuestas
+  liquidadas por grupo (tier, mercado o baseline) para reportar un intervalo
+  de confianza de CLV**, no como una ventana de validación por temporada
+  (que es como se usa en la Fase 3). El nombre del campo en
+  `config/thresholds.yaml` es ambiguo entre ambos usos; se documenta aquí en
+  vez de introducir un campo de configuración nuevo para lo mismo.
+- **`empate` en moneyline liquida como `push`** (nadie gana, el stake se
+  devuelve): el mercado `moneyline` solo tiene selecciones `home`/`away`, y
+  un empate real (posible sobre todo en NFL) no favorece a ninguna.
+- **Los partidos pospuestos o cancelados nunca se liquidan.** Sin marcador
+  final no hay outcome que calcular; la liquidación explícita de esos casos
+  (con `outcome=void`) queda para cuando el pipeline de ingesta distinga
+  activamente "pospuesto para siempre" de "pospuesto, reprogramado" — hoy
+  ese partido simplemente no genera una fila en `results`.
 
 ## CLI de ingesta
 
@@ -365,6 +421,26 @@ uv run deportivas signals generate --competition-id eng-premier-league
 Sí es idempotente: `signals.write` hace upsert sobre `id` (regla de todas
 las tablas no `append_only`), así que re-ejecutarlo tras capturar cuotas
 nuevas actualiza cada señal en vez de duplicarla.
+
+## CLI de backtest
+
+```bash
+uv run deportivas backtest --help
+
+# Requiere que ya existan signals (deportivas signals generate) para la
+# misma competicion.
+uv run deportivas backtest settle --competition-id eng-premier-league
+
+# Requiere haber corrido "settle" primero.
+uv run deportivas backtest report --competition-id eng-premier-league
+```
+
+`settle` es idempotente por el mismo motivo que `signals generate`
+(`results.write` hace upsert sobre `signal_id`): volver a correrlo tras
+capturar más cuotas de cierre actualiza `closing_price`/`clv` en vez de
+duplicar la fila. `report` no escribe nada — solo lee `results` y `signals`,
+agrega, y muestra el CLV medio (con su intervalo de confianza cuando hay
+datos suficientes) y el ROI, global y desglosado, junto a las baselines.
 
 ## Arquitectura de datos
 
@@ -482,17 +558,24 @@ src/deportivas/
     moneyline_training.py      Walk-forward compartido por NFL/NBA/NHL/MLB
     football/                 Poisson bivariante: matriz de goles -> 1x2/over_under/btts
     nfl/ nba/ nhl/ mlb/        train.py: wrapper fino sobre moneyline_training.py
+  odds/
+    resolve.py                Resolucion de mercado punto-en-tiempo, compartida por signals y backtest
   signals/
     devig.py                 Quita el margen de la cuota (multiplicativo, power, Shin)
     tiers.py                  Clasifica alta/media/baja/descartar contra thresholds.yaml
     staking.py                 Stake de Kelly fraccionado, tope duro
     generate.py                 Une predictions + odds_snapshots -> signals
-  cli.py                   Un comando por adaptador de ingesta, pipeline de features, modelo y senal
-  backtest/ api/ export/   (Fase 5+)
+  backtest/
+    settlement.py             Liquida signals contra el marcador final -> results, CLV incluido
+    bootstrap.py               Intervalo de confianza por remuestreo, generico (CLV o pnl)
+    baselines.py                always_favourite / random, mismo instante de cuota que la senal real
+    report.py                   CLV/ROI global, por tier, por mercado y contra cada baseline
+  cli.py                   Un comando por adaptador de ingesta, pipeline de features, modelo, senal y backtest
+  api/ export/             (Fase 6+)
 alembic/                  Migraciones sobre la metadata de contracts/
 frontend/                 React + Vite + TS + Tailwind (Fase 7)
 tests/
-  unit/ contracts/ backtest/ fixtures/
+  unit/ contracts/ fixtures/
 .github/workflows/        CI (incluye servicio Postgres); daily/odds/deploy/sources-health en fases posteriores
 ```
 

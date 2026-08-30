@@ -26,6 +26,11 @@ runner = CliRunner()
 def _settings_in_tmp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("DEPORTIVAS_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("DEPORTIVAS_THE_ODDS_API_KEY", raising=False)
+    # Los comandos fbref-*/understat-*/espn-*/footballdata-* llaman a
+    # ensure_custom_league_dict() antes de importar su adaptador (ver
+    # ingest/soccerdata_config.py); sin esto escribirian de verdad en el
+    # ~/soccerdata real de la maquina que corre los tests.
+    monkeypatch.setenv("SOCCERDATA_DIR", str(tmp_path / "soccerdata"))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

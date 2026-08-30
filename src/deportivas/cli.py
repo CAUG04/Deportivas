@@ -95,6 +95,9 @@ def fbref_schedule(
     competition_id: CompetitionId, fbref_league: LeagueKey, seasons: Seasons
 ) -> None:
     """FBref: calendario y resultados -> fixtures."""
+    from deportivas.ingest.soccerdata_config import ensure_custom_league_dict
+
+    ensure_custom_league_dict()
     from deportivas.ingest.sources.fbref import FBrefSource
 
     source = FBrefSource(
@@ -112,6 +115,9 @@ def fbref_schedule(
 @ingest_app.command("fbref-stats")
 def fbref_stats(competition_id: CompetitionId, fbref_league: LeagueKey, seasons: Seasons) -> None:
     """FBref: estadisticas por equipo y partido -> team_match_stats."""
+    from deportivas.ingest.soccerdata_config import ensure_custom_league_dict
+
+    ensure_custom_league_dict()
     from deportivas.ingest.sources.fbref import FBrefSource
 
     source = FBrefSource(
@@ -131,6 +137,9 @@ def understat_stats(
     competition_id: CompetitionId, understat_league: LeagueKey, seasons: Seasons
 ) -> None:
     """Understat: xG por partido -> team_match_stats."""
+    from deportivas.ingest.soccerdata_config import ensure_custom_league_dict
+
+    ensure_custom_league_dict()
     from deportivas.ingest.sources.understat import UnderstatSource
 
     source = UnderstatSource(
@@ -150,6 +159,9 @@ def understat_stats(
 @ingest_app.command("espn-schedule")
 def espn_schedule(competition_id: CompetitionId, espn_league: LeagueKey, seasons: Seasons) -> None:
     """ESPN: calendario (sin resultado final) -> fixtures. Unica fuente para Liga BetPlay."""
+    from deportivas.ingest.soccerdata_config import ensure_custom_league_dict
+
+    ensure_custom_league_dict()
     from deportivas.ingest.sources.espn import EspnSource
 
     source = EspnSource(
@@ -169,6 +181,9 @@ def footballdata_games(
     competition_id: CompetitionId, match_history_league: LeagueKey, seasons: Seasons
 ) -> None:
     """football-data.co.uk: resultados historicos -> fixtures."""
+    from deportivas.ingest.soccerdata_config import ensure_custom_league_dict
+
+    ensure_custom_league_dict()
     from deportivas.ingest.sources.footballdata import FootballDataSource
 
     source = FootballDataSource(
@@ -190,6 +205,9 @@ def footballdata_odds(
     competition_id: CompetitionId, match_history_league: LeagueKey, seasons: Seasons
 ) -> None:
     """football-data.co.uk: cuotas 1X2 historicas (incluye cierre Pinnacle) -> odds_snapshots."""
+    from deportivas.ingest.soccerdata_config import ensure_custom_league_dict
+
+    ensure_custom_league_dict()
     from deportivas.ingest.sources.footballdata import FootballDataSource
 
     source = FootballDataSource(

@@ -23,7 +23,6 @@ together decide whether the market moved favourably before kickoff.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
@@ -33,89 +32,14 @@ from deportivas.config.catalog import LineMoveConfig, ThresholdsCatalog, load_th
 from deportivas.contracts.tables import MODEL_REGISTRY, ODDS_SNAPSHOTS, PREDICTIONS, SIGNALS
 from deportivas.domain.ids import deterministic_id
 from deportivas.features.asof import load_fixtures
-from deportivas.signals.devig import devig
+from deportivas.odds.resolve import ResolvedMarket, fair_probabilities, resolve_market
 from deportivas.signals.staking import kelly_stake_fraction
 from deportivas.signals.tiers import TierInputs, classify_tier
 from deportivas.storage.factory import get_table_repository
 
 
-@dataclass(frozen=True, slots=True)
-class _MarketSnapshot:
-    captured_at: datetime
-    prices: dict[str, float]  # selection -> cuota decimal, todas capturadas juntas
-
-
-@dataclass(frozen=True, slots=True)
-class _ResolvedMarket:
-    bookmaker: str
-    snapshots: list[_MarketSnapshot]  # cronologico, mas antiguo primero
-
-
-def _market_snapshots(odds: pd.DataFrame) -> list[_MarketSnapshot]:
-    """Groups one (fixture, bookmaker, market, line) slice of ``odds_snapshots``
-    by ``captured_at`` — every selection of a market is scraped together in
-    one pass, so rows sharing a timestamp are one snapshot. A moment with
-    fewer than two priced selections carries no margin to remove and is not
-    real market data, so it is dropped rather than devigged into a trivial
-    (and wrong) probability of 1.0."""
-    snapshots = [
-        _MarketSnapshot(
-            captured_at=cast(datetime, captured_at),
-            prices=dict(zip(group["selection"], group["price"], strict=True)),
-        )
-        for captured_at, group in odds.groupby("captured_at")
-    ]
-    return sorted((s for s in snapshots if len(s.prices) >= 2), key=lambda s: s.captured_at)
-
-
-def _line_mask(lines: pd.Series, line: float | None) -> pd.Series:
-    if line is None:
-        return lines.isna()
-    return lines == line
-
-
-def _resolve_market(
-    odds: pd.DataFrame,
-    *,
-    fixture_id: str,
-    market: str,
-    selection: str,
-    line: float | None,
-    as_of_timestamp: datetime,
-    kickoff_utc: datetime,
-    reference_bookmaker: str,
-    fallback_bookmakers: tuple[str, ...],
-) -> _ResolvedMarket | None:
-    """Tries ``reference_bookmaker`` first, then each fallback in order,
-    returning the first one with at least one in-window snapshot that
-    actually prices ``selection``. ``None`` when no bookmaker has anything
-    usable — there is nothing honest to build a signal from."""
-    same_market = odds[
-        (odds["fixture_id"] == fixture_id)
-        & (odds["market"] == market)
-        & _line_mask(odds["line"], line)
-        & (odds["captured_at"] >= as_of_timestamp)
-        & (odds["captured_at"] <= kickoff_utc)
-    ]
-    for bookmaker in (reference_bookmaker, *fallback_bookmakers):
-        snapshots = [
-            snapshot
-            for snapshot in _market_snapshots(same_market[same_market["bookmaker"] == bookmaker])
-            if selection in snapshot.prices
-        ]
-        if snapshots:
-            return _ResolvedMarket(bookmaker=bookmaker, snapshots=snapshots)
-    return None
-
-
-def _fair_probabilities(prices: dict[str, float], *, method: str) -> dict[str, float]:
-    selections = list(prices)
-    fair = devig([prices[s] for s in selections], method=method)
-    return dict(zip(selections, fair, strict=True))
-
-
 def _has_favourable_line_move(
-    resolved: _ResolvedMarket, *, selection: str, method: str, config: LineMoveConfig
+    resolved: ResolvedMarket, *, selection: str, method: str, config: LineMoveConfig
 ) -> bool:
     """The market's own fair price for ``selection`` must have dropped by at
     least ``favourable_drop`` between the entry and the latest snapshot —
@@ -124,8 +48,8 @@ def _has_favourable_line_move(
     has no movement to measure."""
     if len(resolved.snapshots) < config.min_snapshots:
         return False
-    entry_fair = _fair_probabilities(resolved.snapshots[0].prices, method=method)[selection]
-    latest_fair = _fair_probabilities(resolved.snapshots[-1].prices, method=method)[selection]
+    entry_fair = fair_probabilities(resolved.snapshots[0].prices, method=method)[selection]
+    latest_fair = fair_probabilities(resolved.snapshots[-1].prices, method=method)[selection]
     entry_fair_price = 1.0 / entry_fair
     latest_fair_price = 1.0 / latest_fair
     relative_drop = (entry_fair_price - latest_fair_price) / entry_fair_price
@@ -165,23 +89,23 @@ def _build_signal_row(
     thresholds: ThresholdsCatalog,
     now: datetime,
 ) -> dict[str, object] | None:
-    resolved = _resolve_market(
+    resolved = resolve_market(
         odds,
         fixture_id=fixture_id,
         market=market,
-        selection=selection,
         line=line,
         as_of_timestamp=as_of_timestamp,
         kickoff_utc=kickoff_utc,
         reference_bookmaker=thresholds.devig.reference_bookmaker,
         fallback_bookmakers=thresholds.devig.fallback_bookmakers,
+        required_selection=selection,
     )
     if resolved is None:
         return None
 
     devig_method = thresholds.devig.method.value
     entry = resolved.snapshots[0]
-    prob_fair = _fair_probabilities(entry.prices, method=devig_method)[selection]
+    prob_fair = fair_probabilities(entry.prices, method=devig_method)[selection]
 
     is_calibrated = prob_calibrated is not None
     prob_model = prob_calibrated if prob_calibrated is not None else prob_raw

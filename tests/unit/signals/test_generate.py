@@ -22,15 +22,10 @@ from deportivas.contracts.tables import (
     SIGNALS,
 )
 from deportivas.domain.ids import deterministic_id
+from deportivas.odds.resolve import MarketSnapshot, ResolvedMarket
 from deportivas.signals.generate import (
     _build_signal_row,
-    _fair_probabilities,
     _has_favourable_line_move,
-    _line_mask,
-    _market_snapshots,
-    _MarketSnapshot,
-    _resolve_market,
-    _ResolvedMarket,
     _sample_matches_by_model,
     compute_and_write_signals,
 )
@@ -138,191 +133,13 @@ def _model_registry_row(**overrides: object) -> dict[str, object]:
     return base
 
 
-# --- _line_mask -------------------------------------------------------------
-
-
-def test_line_mask_none_matches_nan_lines() -> None:
-    lines = pd.Series([1.5, None, 2.5])
-    assert list(_line_mask(lines, None)) == [False, True, False]
-
-
-def test_line_mask_value_matches_exact_line() -> None:
-    lines = pd.Series([1.5, 2.5, 2.5])
-    assert list(_line_mask(lines, 2.5)) == [False, True, True]
-
-
-# --- _market_snapshots --------------------------------------------------
-
-
-def test_market_snapshots_groups_by_captured_at_and_sorts_chronologically() -> None:
-    early = _AS_OF
-    late = _AS_OF + timedelta(days=1)
-    df = pd.DataFrame(
-        [
-            _odds_row(selection="over", price=2.0, captured_at=late),
-            _odds_row(selection="under", price=2.0, captured_at=late),
-            _odds_row(selection="over", price=1.9, captured_at=early),
-            _odds_row(selection="under", price=2.2, captured_at=early),
-        ]
-    )
-    snapshots = _market_snapshots(df)
-    assert [s.captured_at for s in snapshots] == [early, late]
-    assert snapshots[0].prices == {"over": 1.9, "under": 2.2}
-    assert snapshots[1].prices == {"over": 2.0, "under": 2.0}
-
-
-def test_market_snapshots_drops_moments_with_a_single_priced_selection() -> None:
-    df = pd.DataFrame([_odds_row(selection="over", price=2.0)])
-    assert _market_snapshots(df) == []
-
-
-# --- _resolve_market ------------------------------------------------------
-
-
-def test_resolve_market_prefers_reference_bookmaker() -> None:
-    df = pd.DataFrame(
-        [
-            _odds_row(bookmaker="pinnacle", selection="over", price=2.0),
-            _odds_row(bookmaker="pinnacle", selection="under", price=2.0),
-            _odds_row(bookmaker="bet365", selection="over", price=1.8),
-            _odds_row(bookmaker="bet365", selection="under", price=2.1),
-        ]
-    )
-    resolved = _resolve_market(
-        df,
-        fixture_id=_FIXTURE_ID,
-        market="over_under",
-        selection="over",
-        line=2.5,
-        as_of_timestamp=_AS_OF,
-        kickoff_utc=_KICKOFF,
-        reference_bookmaker="pinnacle",
-        fallback_bookmakers=("bet365",),
-    )
-    assert resolved is not None
-    assert resolved.bookmaker == "pinnacle"
-
-
-def test_resolve_market_falls_back_in_order() -> None:
-    df = pd.DataFrame(
-        [
-            _odds_row(bookmaker="bet365", selection="over", price=1.8),
-            _odds_row(bookmaker="bet365", selection="under", price=2.1),
-        ]
-    )
-    resolved = _resolve_market(
-        df,
-        fixture_id=_FIXTURE_ID,
-        market="over_under",
-        selection="over",
-        line=2.5,
-        as_of_timestamp=_AS_OF,
-        kickoff_utc=_KICKOFF,
-        reference_bookmaker="pinnacle",
-        fallback_bookmakers=("betfair_ex", "bet365"),
-    )
-    assert resolved is not None
-    assert resolved.bookmaker == "bet365"
-
-
-def test_resolve_market_returns_none_without_any_usable_bookmaker() -> None:
-    # una sola seleccion capturada: no hay margen que quitar, se descarta
-    df = pd.DataFrame([_odds_row(bookmaker="pinnacle", selection="over", price=2.0)])
-    resolved = _resolve_market(
-        df,
-        fixture_id=_FIXTURE_ID,
-        market="over_under",
-        selection="over",
-        line=2.5,
-        as_of_timestamp=_AS_OF,
-        kickoff_utc=_KICKOFF,
-        reference_bookmaker="pinnacle",
-        fallback_bookmakers=(),
-    )
-    assert resolved is None
-
-
-def test_resolve_market_excludes_odds_captured_before_as_of_timestamp() -> None:
-    too_early = _AS_OF - timedelta(days=1)
-    df = pd.DataFrame(
-        [
-            _odds_row(bookmaker="pinnacle", selection="over", price=2.0, captured_at=too_early),
-            _odds_row(bookmaker="pinnacle", selection="under", price=2.0, captured_at=too_early),
-        ]
-    )
-    resolved = _resolve_market(
-        df,
-        fixture_id=_FIXTURE_ID,
-        market="over_under",
-        selection="over",
-        line=2.5,
-        as_of_timestamp=_AS_OF,
-        kickoff_utc=_KICKOFF,
-        reference_bookmaker="pinnacle",
-        fallback_bookmakers=(),
-    )
-    assert resolved is None
-
-
-def test_resolve_market_excludes_odds_captured_after_kickoff() -> None:
-    too_late = _KICKOFF + timedelta(days=1)
-    df = pd.DataFrame(
-        [
-            _odds_row(bookmaker="pinnacle", selection="over", price=2.0, captured_at=too_late),
-            _odds_row(bookmaker="pinnacle", selection="under", price=2.0, captured_at=too_late),
-        ]
-    )
-    resolved = _resolve_market(
-        df,
-        fixture_id=_FIXTURE_ID,
-        market="over_under",
-        selection="over",
-        line=2.5,
-        as_of_timestamp=_AS_OF,
-        kickoff_utc=_KICKOFF,
-        reference_bookmaker="pinnacle",
-        fallback_bookmakers=(),
-    )
-    assert resolved is None
-
-
-def test_resolve_market_matches_lineless_markets_via_none() -> None:
-    df = pd.DataFrame(
-        [
-            _odds_row(market="btts", selection="yes", line=None, price=2.0),
-            _odds_row(market="btts", selection="no", line=None, price=2.0),
-        ]
-    )
-    resolved = _resolve_market(
-        df,
-        fixture_id=_FIXTURE_ID,
-        market="btts",
-        selection="yes",
-        line=None,
-        as_of_timestamp=_AS_OF,
-        kickoff_utc=_KICKOFF,
-        reference_bookmaker="pinnacle",
-        fallback_bookmakers=(),
-    )
-    assert resolved is not None
-    assert resolved.snapshots[0].prices == {"yes": 2.0, "no": 2.0}
-
-
-# --- _fair_probabilities --------------------------------------------------
-
-
-def test_fair_probabilities_normalizes_by_selection() -> None:
-    fair = _fair_probabilities({"over": 2.0, "under": 2.0}, method="multiplicative")
-    assert fair == {"over": pytest.approx(0.5), "under": pytest.approx(0.5)}
-
-
 # --- _has_favourable_line_move --------------------------------------------
 
 
 def test_favourable_line_move_requires_min_snapshots() -> None:
-    resolved = _ResolvedMarket(
+    resolved = ResolvedMarket(
         bookmaker="pinnacle",
-        snapshots=[_MarketSnapshot(captured_at=_AS_OF, prices={"over": 2.0, "under": 2.0})],
+        snapshots=[MarketSnapshot(captured_at=_AS_OF, prices={"over": 2.0, "under": 2.0})],
     )
     config = LineMoveConfig(favourable_drop=0.01, min_snapshots=2)
     assert (
@@ -334,11 +151,11 @@ def test_favourable_line_move_requires_min_snapshots() -> None:
 
 
 def test_favourable_line_move_true_when_fair_price_drops_enough() -> None:
-    resolved = _ResolvedMarket(
+    resolved = ResolvedMarket(
         bookmaker="pinnacle",
         snapshots=[
-            _MarketSnapshot(captured_at=_AS_OF, prices={"over": 2.0, "under": 2.0}),
-            _MarketSnapshot(captured_at=_KICKOFF, prices={"over": 1.8, "under": 2.25}),
+            MarketSnapshot(captured_at=_AS_OF, prices={"over": 2.0, "under": 2.0}),
+            MarketSnapshot(captured_at=_KICKOFF, prices={"over": 1.8, "under": 2.25}),
         ],
     )
     config = LineMoveConfig(favourable_drop=0.01, min_snapshots=2)
@@ -351,11 +168,11 @@ def test_favourable_line_move_true_when_fair_price_drops_enough() -> None:
 
 
 def test_favourable_line_move_false_when_price_moves_the_wrong_way() -> None:
-    resolved = _ResolvedMarket(
+    resolved = ResolvedMarket(
         bookmaker="pinnacle",
         snapshots=[
-            _MarketSnapshot(captured_at=_AS_OF, prices={"over": 1.8, "under": 2.25}),
-            _MarketSnapshot(captured_at=_KICKOFF, prices={"over": 2.0, "under": 2.0}),
+            MarketSnapshot(captured_at=_AS_OF, prices={"over": 1.8, "under": 2.25}),
+            MarketSnapshot(captured_at=_KICKOFF, prices={"over": 2.0, "under": 2.0}),
         ],
     )
     config = LineMoveConfig(favourable_drop=0.01, min_snapshots=2)

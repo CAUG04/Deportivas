@@ -139,9 +139,9 @@ sobre exactamente los mismos partidos, en el mismo instante de cuota que ya
 usó la señal real? `report.py` junta todo: CLV medio, su intervalo de
 confianza, pnl y ROI — global, por tier, por mercado y contra cada
 baseline. Ver [alcance de la Fase 5](#alcance-de-la-fase-5) para las
-decisiones de diseño (el precio de cierre sin el flag de Fase 8 todavía,
-el stake plano de las baselines, y qué significa aquí
-`min_matches_per_window`).
+decisiones de diseño (el fallback del precio de cierre cuando `mark_closing`
+todavía no corrió para un fixture, el stake plano de las baselines, y qué
+significa aquí `min_matches_per_window`).
 
 **Fase 6 — API y export.** `src/deportivas/api/views.py` es la única fuente
 de verdad de "qué ve el consumidor": funciones puras (sin importar
@@ -173,6 +173,55 @@ confianza cuando lo hay, ROI, desglose por tier/mercado, comparación contra
 las baselines) — deliberadamente minimalista: ver
 [alcance de la Fase 7](#alcance-de-la-fase-7) para qué queda fuera y por qué.
 
+**Fase 8 — Automatización diaria.** `scripts/run_daily_pipeline.sh` es el
+único lugar que decide, por competición, qué comando de ingesta correr y en
+qué orden — el CLI sigue siendo primitivas puras, la orquestación vive en
+el script, no en código Python nuevo (ver el docstring de `cli.py`).
+Refresca calendario/stats + entrena modelos solo para las competiciones
+cuya cadencia toca hoy (`daily` siempre, `weekly` una vez por semana — la
+palanca contra el límite de tiempo del runner), y corre cierre de línea +
+señales + liquidación **todos los días, para toda competición habilitada**,
+sin importar si su calendario se refrescó hoy: un partido arranca y termina
+entre dos refrescos de una competición `weekly` igual. Dos piezas nuevas lo
+hacen posible:
+
+- **`storage/protocols.py`'s `mark_closing`** — la única excepción,
+  deliberada y acotada, a "las tablas append-only nunca se actualizan"
+  (regla de la Fase 0/1). Marca `is_closing=True` sobre el último snapshot
+  antes del kickoff de cada fixture ya arrancado. Es una optimización, no
+  una dependencia de corrección: `closing_price()` (`backtest/settlement.py`)
+  sigue cayendo al mismo fallback documentado en la
+  [Fase 5](#alcance-de-la-fase-5) si esto nunca corre — `ingest/closing.py`
+  es el job que lo ejecuta, idempotente (salta un fixture ya marcado).
+- **`domain/seasons.py`** — la temporada actual de una competición, en el
+  formato que cada fuente espera (código de dos años para fútbol, año
+  simple para el resto), para que `deportivas current-seasons` alimente
+  `--seasons` sin que un humano lo calcule a mano cada día. `deportivas
+  list-competitions` completa el trío: vuelca `competitions.yaml` como
+  JSON para que el script lo recorra con `jq`.
+
+**Fase 9 — Arquitectura de despliegue gratuito.** Ver
+[la sección dedicada](#arquitectura-de-despliegue-gratuito) más abajo para
+el detalle completo (el Release de GitHub como disco persistente, el
+presupuesto de créditos de The Odds API, el encadenado hacia GitHub Pages).
+En una frase: `daily.yml`/`odds.yml` producen datos y los publican como el
+asset de un Release fijo; `deploy.yml` los descarga, exporta el JSON
+estático y construye/publica `frontend/`.
+
+**Fase 10 — Salud de las fuentes.** `ingest/sources_health.py` reutiliza
+los mismos adaptadores que la ingesta real (mismo rate limiting, mismo
+archivado en la capa cruda) para intentar, contra la fuente real, exactamente
+los identificadores que la [Fase 1](#limitaciones-conocidas-de-la-fase-1)
+declaró "no verificados todavía" — y descubrió, de paso, que estaban rotos
+de verdad: nada en el código generaba el `league_dict.json` personalizado
+que `soccerdata` necesita para reconocer Eredivisie/Primeira
+Liga/UEFA/Liga BetPlay Dimayor, así que esas seis competiciones fallaban
+antes de intentar ninguna llamada de red.
+`ingest/soccerdata_config.py` lo genera ahora desde `competitions.yaml`, y
+`sources-health.yml` corre esa misma validación cada día, antes que
+`daily.yml`/`odds.yml`, nombrando la competición y el campo exactos si algo
+deja de cuadrar — nunca solo "algo salió mal".
+
 ## Cobertura objetivo
 
 - **Fútbol europeo:** Premier League, La Liga, Serie A, Bundesliga,
@@ -199,9 +248,11 @@ nueva es añadir un bloque en ese YAML, no escribir código.
   `sources-health.yml` (Fase 10) los valida en cada ejecución y falla
   nombrando exactamente qué fuente y qué campo no coincide.
 - **Cuotas históricas de la Liga BetPlay Dimayor: no existen en ninguna
-  fuente abierta.** No se inventa una fuente. El backtest de esta liga
-  arrancará únicamente con las cuotas que el sistema capture desde el día en
-  que el job de captura (`odds.yml`, Fase 9) entre en producción.
+  fuente abierta.** No se inventa una fuente. `odds.yml` (Fase 9) ya captura
+  esta competición como cualquier otra; el backtest de esta liga arrancará
+  únicamente con las cuotas que capture desde el día en que esa corrida
+  empiece a llegar de verdad (requiere `THE_ODDS_API_KEY` configurada como
+  Secret del repositorio — ver [Fase 9](#arquitectura-de-despliegue-gratuito)).
 - **Cuotas en vivo y de cierre (resto de competiciones):** The Odds API
   (plan gratuito, incluye Pinnacle). Requiere
   `DEPORTIVAS_THE_ODDS_API_KEY` — ver `.env.example`.
@@ -341,16 +392,18 @@ profundidad según qué datos ya están ingeridos:
 
 ## Alcance de la Fase 5
 
-- **El precio de cierre cae al último snapshot pre-kickoff sin el flag de
-  Fase 8 todavía.** `results.clv` se mide contra una fila marcada
-  `is_closing=True`, pero ese flag lo pone un job de liquidación de la Fase
-  8 que corre después del kickoff y que todavía no existe. Mientras tanto,
-  `closing_price` cae al último precio capturado antes del kickoff para el
-  mismo bookmaker de entrada — la mejor aproximación disponible a "el precio
-  en el que se cerró el mercado", documentada como tal en el docstring de
-  `settlement.py`, no un dato inventado. En cuanto la Fase 8 empiece a
-  marcar `is_closing`, ese flag gana automáticamente sin tocar una línea de
-  código aquí.
+- **El precio de cierre cae al último snapshot pre-kickoff cuando
+  `mark_closing` todavía no corrió para ese fixture.** `results.clv` se mide
+  contra una fila marcada `is_closing=True`; ese flag lo pone
+  `ingest/closing.py` (Fase 8), corrido a diario por `daily.yml`/`odds.yml`
+  después del kickoff. Mientras tanto — o si esa corrida todavía no llegó a
+  este fixture — `closing_price` cae al último precio capturado antes del
+  kickoff para el mismo bookmaker de entrada: la misma aproximación, nunca
+  un dato inventado, documentada como tal en el docstring de
+  `settlement.py`. El flag, cuando existe, gana automáticamente sin tocar
+  una línea de código aquí — ver [Fase 8](#estado-del-proyecto) para el
+  porqué `mark_closing` es una optimización, no una dependencia de
+  corrección.
 - **Las baselines usan un stake plano de 1 unidad**, no Kelly: no tienen una
   probabilidad propia contra la cual dimensionar una fracción de Kelly. Por
   eso su `pnl` medio ya *es* su ROI por apuesta, mientras que el ROI de la
@@ -437,6 +490,95 @@ profundidad según qué datos ya están ingeridos:
   en `api/app.py`) es una mejora futura razonable, no algo que este MVP
   necesitaba para demostrar que el patrón export-JSON-estático funciona.
 
+## Alcance de la Fase 8
+
+- **`mark_closing` es la única excepción a "append-only nunca se
+  actualiza"**, y deliberadamente acotada: `TableRepository.mark_closing`
+  solo existe para `odds_snapshots`, solo pone `is_closing=True`, y lanza
+  `ValueError` si se llama sobre cualquier otra tabla. No es una puerta
+  general para actualizar datos históricos — es una optimización de
+  lectura (`closing_price` ya funciona sin ella, ver
+  [Fase 5](#alcance-de-la-fase-5)) implementada en los dos backends
+  (reescritura de partición en Parquet, `UPDATE` real en Postgres) y
+  probada contra ambos.
+- **`ingest/closing.py` decide "cerrado" por fixture, no por snapshot
+  individual**: agrupa por `(bookmaker, market, selection, line)` y marca
+  el último `captured_at` antes del kickoff de cada grupo — la línea de
+  1x2-home de Pinnacle y la de asian_handicap del mismo bookmaker cierran
+  en instantes distintos, y cada una necesita su propio "último antes del
+  kickoff". Salta un fixture si ya tiene alguna fila `is_closing=True`
+  (idempotente: seguro de correr a diario sin recalcular de más).
+- **El formato de temporada de `domain/seasons.py` sale de los adaptadores
+  ya existentes, no de una convención inventada aquí**: fútbol usa el
+  código de dos años porque así lo esperan fbref/football-data.co.uk
+  (`ingest/sources/fbref.py`, `footballdata.py`); el resto usa el año
+  simple porque así lo esperan nfl_data_py/pybaseball/sportsdataverse. La
+  fecha de corte entre una temporada y la siguiente es
+  `season_start_month`, ya declarado por competición en
+  `competitions.yaml` — no un segundo campo nuevo para lo mismo.
+- **`list-competitions`/`current-seasons` son primitivas para que un
+  workflow decida, no para decidir ellas mismas.** Devuelven datos
+  (JSON, una lista de temporadas); qué hacer con esos datos —qué comando de
+  ingesta correr, en qué orden— lo decide `scripts/run_daily_pipeline.sh`,
+  siguiendo el mismo principio que el CLI de ingesta ya declara en su
+  propio docstring desde la Fase 1.
+
+## Alcance de la Fase 9
+
+- **Por qué cuatro workflows y no uno.** `sources-health.yml` no toca datos;
+  `daily.yml`/`odds.yml` producen datos pero no saben nada de Vite ni de
+  Pages; `deploy.yml` sabe de Vite y de Pages pero no de ingesta. Cada uno
+  puede fallar, reintentarse o cambiar de cadencia sin arrastrar a los
+  demás — el costo es un `workflow_run` encadenando `deploy.yml`, no una
+  gran orquestación central.
+- **Por qué un Release fijo (`data-lake`) y no un tag por versión.** No hay
+  "versiones" de un data lake que crece a diario — hay un estado actual.
+  Un tag fijo con `--clobber` en cada publicación es más simple que idear un
+  esquema de versionado para algo que nunca se necesita mirar hacia atrás
+  (el historial real vive en la capa cruda append-only dentro del propio
+  *asset*, no en Releases anteriores).
+- **`--regions eu` en `run_odds_pipeline.sh`, no en el CLI.** El comando
+  `ingest odds-snapshot` expone `--regions` con el default de tres regiones
+  del adaptador (`uk,eu,us`) sin opinar — el guión de automatización es
+  quien conoce el presupuesto real y elige recortarlo. Ver la sección
+  ["El presupuesto de The Odds API"](#el-presupuesto-de-the-odds-api) para
+  las cuentas exactas detrás de esa elección.
+- **La cadencia `weekly` se decide por día de la semana dentro del script,
+  no con un segundo cron.** `run_daily_pipeline.sh` calcula `date -u +%u` y
+  compara contra `WEEKLY_DAY` (domingo por defecto) en vez de que
+  `daily.yml` declare dos triggers de cron distintos — un solo punto de
+  entrada, una sola variable de entorno como palanca, en vez de dos YAMLs
+  que tienen que mantenerse en sync.
+- **Nada de esto se ha ejecutado todavía de verdad.** Ver el aviso al final
+  de ["Arquitectura de despliegue gratuito"](#arquitectura-de-despliegue-gratuito):
+  esta sesión de desarrollo no tiene acceso a GitHub Actions, Releases ni
+  red externa para probar la orquestación completa de punta a punta, más
+  allá de lo que YAML/bash/pytest permiten verificar sin red.
+
+## Alcance de la Fase 10
+
+- **Una excepción real encontrada al construir el chequeo, no solo un
+  chequeo nuevo.** `soccerdata` rechazaba `NED-Eredivisie`,
+  `POR-Primeira Liga` y las tres claves `INT-*` de UEFA con `ValueError`
+  antes de intentar ninguna llamada de red, porque nada generaba el
+  `league_dict.json` personalizado que el propio paquete documenta
+  (ver `ingest/soccerdata_config.py`). Las seis competiciones que la
+  [Fase 1](#limitaciones-conocidas-de-la-fase-1) marcó como "no
+  verificadas todavía" estaban, en la práctica, completamente rotas — no
+  solo sin verificar.
+- **Un DataFrame vacío no es un fallo.** `sources_health.py` solo reporta
+  una excepción real (red, HTTP, "liga inválida"); una liga real fuera de
+  temporada devuelve legítimamente cero partidos, y tratar eso como fallo
+  produciría ruido constante en vez de señal.
+- **Reutiliza los adaptadores de producción, no un cliente HTTP aparte.**
+  Validar con el mismo rate limiting y el mismo archivado en capa cruda que
+  `deportivas ingest` evita que "validar" y "correr de verdad" tengan
+  comportamientos de red distintos — la única diferencia es que el
+  resultado se descarta en vez de persistirse.
+- **No participa del data lake.** No restaura ni publica el Release
+  `data-lake`: lo que archiva en la capa cruda durante la corrida vive y
+  muere con el runner efímero.
+
 ## CLI de ingesta
 
 ```bash
@@ -450,9 +592,30 @@ uv run deportivas ingest fbref-schedule \
 ```
 
 Backfill (histórico, `--seasons` explícito) e ingesta incremental son el
-mismo comando con una lista de temporadas distinta — la Fase 8 es la que
-programa las corridas diarias de "temporada actual"; este CLI no adivina
-ventanas de fechas por su cuenta.
+mismo comando con una lista de temporadas distinta — este CLI no adivina
+ventanas de fechas por su cuenta. `scripts/run_daily_pipeline.sh` (Fase 8)
+es lo que programa las corridas diarias de "temporada actual", apoyándose
+en dos comandos más pensados para eso:
+
+```bash
+uv run deportivas list-competitions      # todas las competiciones habilitadas, como JSON
+uv run deportivas current-seasons --competition-id eng-premier-league --count 2
+uv run deportivas ingest mark-closing --competition-id eng-premier-league
+uv run deportivas sources-health          # valida fuentes en vivo, sale con codigo 1 si algo no cuadra
+```
+
+`list-competitions` es lo que un workflow recorre con `jq` para decidir qué
+comando de ingesta correr por competición, sin parsear YAML a mano en bash.
+`current-seasons` calcula la temporada actual en el formato que cada fuente
+espera (código de dos años para fútbol, año simple para el resto) y se pasa
+directo a `--seasons`. `mark-closing` marca `is_closing=True` sobre el
+último snapshot antes del kickoff de cada fixture ya arrancado — una
+optimización sobre el fallback que `backtest/settlement.py` ya calcula en
+tiempo de lectura, nunca una dependencia (ver
+[Fase 8](#estado-del-proyecto)); seguro de correr a diario, salta los
+fixtures ya marcados. `sources-health` reutiliza los mismos adaptadores
+para validar identificadores y claves contra la fuente real sin persistir
+nada (ver [Fase 10](#estado-del-proyecto)).
 
 ## CLI de features
 
@@ -587,9 +750,10 @@ implementación está conectada, no reescribir lógica.
 solo un motor de consulta sobre ficheros Parquet particionados por
 competición y temporada (`storage/duckdb_repo/`). El *upsert* sobre la clave
 natural de cada tabla (lo que hace idempotente reejecutar una fuente) se
-implementa a mano — Parquet no tiene `ON CONFLICT`. Los Parquet se
-publicarán como *assets* de GitHub Releases (Fase 9), no como archivos del
-repositorio.
+implementa a mano — Parquet no tiene `ON CONFLICT`. `data/raw/` y
+`data/parquet/` se publican como el *asset* de un Release fijo de GitHub
+(Fase 9, `scripts/{restore,publish}_data_lake.sh`), nunca como archivos del
+repositorio — ver [Fase 9](#arquitectura-de-despliegue-gratuito).
 
 **Capa cruda append-only** (`storage/duckdb_repo/raw_store.py`): cada
 respuesta de una fuente se guarda tal cual, con hash de contenido y
@@ -614,6 +778,104 @@ CI) prueba este backend contra un Postgres real, no solo contra DuckDB.
 Postgres (free tier permanente, escala a cero) y la API a Hugging Face
 Spaces. Al depender todo de `storage/protocols.py`, ese cambio es
 implementar una nueva clase que satisfaga las interfaces existentes.
+
+## Arquitectura de despliegue gratuito
+
+Sin servidor encendido, sin tarjeta de crédito: todo corre en runners
+efímeros de GitHub Actions (gratis en un repositorio público) que no
+conservan nada entre corridas, y el resultado se sirve desde GitHub Pages
+(gratis, estático). Cuatro workflows, cada uno con una sola responsabilidad
+— la orquestación vive en `scripts/*.sh` y en el YAML, nunca en código
+Python nuevo, siguiendo el mismo principio que ya rige `cli.py`:
+
+| Workflow | Cadencia | Qué hace |
+|---|---|---|
+| `sources-health.yml` (Fase 10) | diario, 05:00 UTC | Valida en vivo los identificadores de fuente y las claves de The Odds API. No toca el data lake. |
+| `daily.yml` (Fase 8) | diario, 06:00 UTC | Ingesta incremental + features + modelos (según cadencia `daily`/`weekly`) + cierre de línea + señales + liquidación, para toda competición habilitada. |
+| `odds.yml` (Fase 9) | lunes y jueves, 12:00 UTC | Captura de cuotas (The Odds API) + la misma cadena de cierre/señales/liquidación. |
+| `deploy.yml` (Fase 7/9) | tras `daily.yml`/`odds.yml`, o al tocar `frontend/` | Exporta el JSON estático más fresco y publica `frontend/` en GitHub Pages. |
+
+### El Release de GitHub como disco persistente
+
+Un runner de GitHub Actions no conserva disco entre corridas — la pieza que
+hace que esto funcione igual es un único Release fijo, con el tag literal
+`data-lake` (no es una versión de software), cuyo único *asset*
+(`deportivas-data-lake.tar.gz`, empaquetando `data/raw/` y `data/parquet/`
+— nunca `data/cache/`, que es regenerable) se reemplaza en cada corrida:
+
+- `scripts/restore_data_lake.sh` lo descarga y desempaqueta al principio de
+  `daily.yml`/`odds.yml`. Si el Release todavía no existe (primera corrida
+  jamás), lo avisa y arranca con `data/` vacío — nunca falla por esto.
+- `scripts/publish_data_lake.sh` lo vuelve a subir (`--clobber`) al final,
+  siempre (`if: always()`), incluso si el pipeline falló a mitad de camino:
+  lo que sí se alcanzó a ingerir no se pierde.
+
+`daily.yml` y `odds.yml` comparten el grupo de concurrencia
+`deportivas-data-lake` (`cancel-in-progress: false`): dos corridas escribiendo
+el mismo *asset* a la vez se pisarían una a otra, así que la segunda espera
+a que la primera termine de publicar en vez de correr en paralelo.
+
+### Del dato al sitio: `deploy.yml`
+
+`daily.yml`/`odds.yml` no saben nada de Vite ni de GitHub Pages — solo
+producen datos. `deploy.yml` es el único que sí, encadenado con
+`workflow_run` justo después de que cualquiera de los otros dos termine (mas
+`workflow_dispatch` y un `push` a `frontend/`, para que un cambio de UI no
+espere a la próxima corrida de datos): descarga el data lake más reciente,
+corre `deportivas export run` para regenerar `frontend/public/data/*.json`
+fresco, construye el frontend y lo publica. `frontend/public/data/` sigue
+siendo generado, no fuente ([Fase 7](#alcance-de-la-fase-7)) — este es
+literalmente el único lugar donde se genera de verdad en producción.
+
+### El presupuesto de The Odds API
+
+El plan gratuito son 500 créditos/mes, y cada llamada a
+`/v4/sports/{sport}/odds` cuesta `mercados × regiones` créditos — el número
+de partidos que devuelve no importa. `scripts/run_odds_pipeline.sh` fija
+`--regions eu` (Pinnacle, la referencia de este proyecto, vive ahí) en vez
+del default de tres regiones del CLI: una corrida completa de las 15
+competiciones cuesta ~44 créditos con una región, ~132 con tres. A ~44
+créditos/corrida, `odds.yml` corriendo lunes y jueves (~9 corridas/mes) usa
+~396 créditos/mes — deja margen para reintentos manuales
+(`workflow_dispatch`) sin tocar el tope. Mover la cadencia o las regiones es
+la misma palanca que ya existe para el tiempo de `daily.yml`
+(`config/competitions.yaml`'s `refresh: daily | weekly`): un número en un
+sitio, no una reescritura.
+
+### Notificación de fallos
+
+Los cuatro workflows —y `ci.yml`— comparten un job reutilizable
+(`.github/workflows/notify-failure.yml`, invocado con `uses:` en vez de
+copiar el mismo bloque cuatro veces) que abre un issue etiquetado, o
+comenta en el ya abierto para ese workflow, en vez de fallar en silencio
+(regla de la Fase 10, aplicada desde la Fase 0 en `ci.yml`).
+
+### Configuración manual, una sola vez
+
+Nada de esto corre solo con el código en el repositorio — hace falta, una
+vez, fuera de este repositorio:
+
+1. **Settings → Pages → Source = "GitHub Actions"** — sin esto,
+   `deploy.yml` construye el sitio pero no tiene dónde publicarlo.
+2. **Settings → Secrets and variables → Actions**, crear `THE_ODDS_API_KEY`
+   (la clave de [the-odds-api.com](https://the-odds-api.com), plan
+   gratuito) — sin ella, `odds.yml` y la mitad de `sources-health.yml` se
+   saltan en silencio (documentado así en sus propios docstrings), no
+   fallan.
+3. **Settings → Actions → General → Workflow permissions** — confirmar que
+   permite "Read and write permissions", para que `publish_data_lake.sh`
+   pueda crear/actualizar el Release y `deploy.yml` pueda publicar en
+   Pages.
+
+Ninguno de los cuatro workflows se ha ejecutado todavía de verdad: esta
+sesión de desarrollo no tiene acceso a GitHub Actions, a Releases reales ni
+a red externa (FBref, The Odds API) para probarlos de punta a punta. Cada
+uno está verificado por separado hasta donde es posible sin red — sintaxis
+YAML, la lógica de cada script contra `deportivas list-competitions` real
+y con `uv`/dobles simulando cada comando, y el código Python detrás de cada
+CLI con cobertura del 100 % — pero la primera corrida real, después de los
+tres pasos de arriba, es la que confirma que la orquestación completa
+funciona de punta a punta.
 
 ## Empezar en local
 
@@ -649,7 +911,8 @@ cd frontend && npm install && npm run dev
 config/                  YAML: competiciones, mercados, umbrales de decisión
 src/deportivas/
   config/                 Settings (Pydantic) + carga validada de config/*.yaml
-  domain/                 Enums cerrados, ids deterministas, guardián de leakage temporal
+  domain/                 Enums cerrados, ids deterministas, guardián de leakage temporal,
+                          seasons.py (temporada actual por competición, Fase 8)
   contracts/              El esquema, declarado una vez, y sus tres adaptadores
   storage/
     protocols.py           Interfaces de repositorio
@@ -661,6 +924,9 @@ src/deportivas/
   ingest/
     base.py                  Interfaz DataSource: rate limiting + archivado en capa cruda
     ratelimit.py cache.py aliases.py
+    closing.py                Marca is_closing sobre el ultimo snapshot pre-kickoff (Fase 8)
+    soccerdata_config.py      Genera el league_dict.json personalizado que soccerdata necesita
+    sources_health.py         Valida fuentes en vivo sin persistir nada (Fase 10)
     sources/                 Un adaptador por fuente (fbref, understat, espn,
                               footballdata, nfl, sportsdataverse_source,
                               pybaseball_source, theoddsapi)
@@ -699,7 +965,9 @@ src/deportivas/
     app.py                     FastAPI de solo lectura, para desarrollo local
   export/
     json_export.py            Escribe los mismos datos de views.py como JSON estatico para frontend/
-  cli.py                   Un comando por adaptador de ingesta, pipeline de features, modelo, senal, backtest y export
+  cli.py                   Un comando por adaptador de ingesta, pipeline de features, modelo,
+                          senal, backtest, export, list-competitions/current-seasons/
+                          mark-closing/sources-health (Fase 8/10)
 alembic/                  Migraciones sobre la metadata de contracts/
 frontend/                 Vite + React 19 + TS + Tailwind v4, lee public/data/*.json
   src/
@@ -708,9 +976,17 @@ frontend/                 Vite + React 19 + TS + Tailwind v4, lee public/data/*.
     useFetch.ts                Hook generico de carga/error para los tres
     components/                CompetitionSelector, SignalsTable, BacktestSummary, TierBadge
   public/data/                Generado por "deportivas export run" -- gitignored salvo .gitkeep
+scripts/                  Orquestacion de la Fase 9 (bash, no Python nuevo)
+  lib_common.sh             Listado de competiciones + cadena de cierre/senales/liquidacion
+  run_daily_pipeline.sh      Ingesta/features/modelos por cadencia + liquidacion diaria
+  run_odds_pipeline.sh       Captura de cuotas + liquidacion
+  restore_data_lake.sh       Descarga data/raw + data/parquet del Release "data-lake"
+  publish_data_lake.sh       Los vuelve a publicar ahi
 tests/
   unit/ contracts/ fixtures/
-.github/workflows/        CI (incluye servicio Postgres); daily/odds/deploy/sources-health en fases posteriores
+.github/workflows/        ci.yml, daily.yml, odds.yml, deploy.yml, sources-health.yml
+                          (Fase 8/9/10) y notify-failure.yml (reutilizable, ver
+                          "Arquitectura de despliegue gratuito")
 ```
 
 ## Variables de entorno

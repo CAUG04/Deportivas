@@ -1,0 +1,63 @@
+name: Sources health
+
+# Fase 10: valida contra la fuente real -- no solo contra su propia sintaxis
+# -- los identificadores que config/competitions.yaml declaro desde la Fase
+# 1 como "no verificados todavia" (Eredivisie, Primeira Liga, las tres
+# competiciones UEFA, Liga BetPlay Dimayor) y las claves de deporte de The
+# Odds API. Ver el docstring de src/deportivas/ingest/sources_health.py
+# para el detalle de que cuenta como fallo (una excepcion real, nunca un
+# DataFrame vacio -- eso solo significa "sin partidos todavia").
+#
+# Corre ANTES que daily.yml/odds.yml en el cron (05:00 UTC vs. 06:00 UTC y
+# lunes/jueves a las 12:00 UTC) para atrapar un identificador roto antes de
+# que la ingesta real desperdicie tiempo de scraping, o la captura de
+# cuotas gaste creditos, en algo que iba a fallar de todas formas.
+#
+# No toca el data lake (ni restaura ni publica el Release "data-lake"):
+# esto solo valida configuracion contra la red, no produce datos que valga
+# la pena persistir.
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # 05:00 UTC, todos los dias
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DEPORTIVAS_THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+
+jobs:
+  sources-health:
+    name: Validar fuentes en vivo
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.6"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Instalar Python 3.11
+        run: uv python install 3.11
+
+      - name: Instalar dependencias (lockfile exacto)
+        run: uv sync --all-extras --frozen
+
+      - name: Validar fuentes
+        run: uv run deportivas sources-health
+
+  notify-on-failure:
+    needs: [sources-health]
+    if: failure()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      workflow-name: Sources health
+      label: sources-health-failure

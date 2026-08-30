@@ -932,3 +932,28 @@ def test_current_seasons_command_defaults_to_two() -> None:
 
     assert result.exit_code == 0, result.output
     assert len(result.output.strip().split(",")) == 2
+
+
+def test_sources_health_command_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("deportivas.ingest.sources_health.run_health_check", lambda: [])
+
+    result = runner.invoke(app, ["sources-health"])
+
+    assert result.exit_code == 0, result.output
+    assert "sources-health: todo OK" in result.output
+
+
+def test_sources_health_command_reports_issues_and_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deportivas.ingest.sources_health import HealthIssue
+
+    monkeypatch.setattr(
+        "deportivas.ingest.sources_health.run_health_check",
+        lambda: [HealthIssue("ned-eredivisie", "sources.fbref", "ValueError: liga invalida")],
+    )
+
+    result = runner.invoke(app, ["sources-health"])
+
+    assert result.exit_code == 1
+    assert "FALLO: ned-eredivisie.sources.fbref: ValueError: liga invalida" in result.output

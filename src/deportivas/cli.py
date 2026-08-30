@@ -643,5 +643,25 @@ def current_seasons_command(
     typer.echo(",".join(season_labels(competition, count=count)))
 
 
+@app.command("sources-health")
+def sources_health_command() -> None:
+    """Fase 10: valida en vivo (sin persistir nada en fixtures/team_match_stats/
+    odds_snapshots) los identificadores de fuente de config/competitions.yaml
+    -- soccerdata (Eredivisie, Primeira Liga, UEFA, Liga BetPlay Dimayor) y
+    las claves de deporte de The Odds API -- y sale con codigo distinto de
+    cero nombrando cada competicion y campo que no cuadra, para que
+    .github/workflows/sources-health.yml (Fase 10) falle ruidosamente en vez
+    de que la proxima ingesta real lo descubra en silencio."""
+    from deportivas.ingest.sources_health import run_health_check
+
+    issues = run_health_check()
+    if not issues:
+        typer.echo("sources-health: todo OK")
+        return
+    for issue in issues:
+        typer.echo(f"FALLO: {issue}")
+    raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":  # pragma: no cover - invocado por el entry point, no por los tests
     app()

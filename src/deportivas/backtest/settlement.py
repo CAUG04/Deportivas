@@ -35,7 +35,7 @@ from deportivas.odds.resolve import line_mask
 from deportivas.storage.factory import get_table_repository
 
 
-def _signal_outcome(
+def signal_outcome(
     market: str, selection: str, line: float | None, *, home_score: float, away_score: float
 ) -> BetOutcome:
     if market == Market.ONE_X_TWO.value:
@@ -66,7 +66,7 @@ def _signal_outcome(
     raise ValueError(f"mercado no soportado para liquidacion: {market!r}")  # pragma: no cover
 
 
-def _pnl_for_outcome(outcome: BetOutcome, *, stake_fraction: float, entry_price: float) -> float:
+def pnl_for_outcome(outcome: BetOutcome, *, stake_fraction: float, entry_price: float) -> float:
     if outcome == BetOutcome.WIN:
         return stake_fraction * (entry_price - 1.0)
     if outcome == BetOutcome.LOSS:
@@ -78,7 +78,7 @@ def _pnl_for_outcome(outcome: BetOutcome, *, stake_fraction: float, entry_price:
     return 0.0  # PUSH, VOID: el stake se devuelve intacto
 
 
-def _closing_price(
+def closing_price(
     odds: pd.DataFrame,
     *,
     fixture_id: str,
@@ -133,14 +133,14 @@ def compute_and_write_results(competition_id: str) -> int:
         market = str(record["market"])
         selection = str(record["selection"])
         line = float(record["line"]) if pd.notna(record["line"]) else None
-        outcome = _signal_outcome(
+        outcome = signal_outcome(
             market, selection, line, home_score=float(home_score), away_score=float(away_score)
         )
         entry_price = float(record["entry_price"])
-        pnl = _pnl_for_outcome(
+        pnl = pnl_for_outcome(
             outcome, stake_fraction=float(record["stake_fraction"]), entry_price=entry_price
         )
-        closing = _closing_price(
+        closing = closing_price(
             odds,
             fixture_id=fixture_id,
             bookmaker=str(record["entry_bookmaker"]),
@@ -149,8 +149,8 @@ def compute_and_write_results(competition_id: str) -> int:
             line=line,
             kickoff_utc=cast(datetime, fixture["kickoff_utc"]),
         )
-        closing_price, closing_captured_at = closing if closing is not None else (None, None)
-        clv = (entry_price / closing_price - 1.0) if closing_price is not None else None
+        closing_price_value, closing_captured_at = closing if closing is not None else (None, None)
+        clv = (entry_price / closing_price_value - 1.0) if closing_price_value is not None else None
 
         signal_id = str(record["id"])
         rows.append(
@@ -162,7 +162,7 @@ def compute_and_write_results(competition_id: str) -> int:
                 "season": str(record["season"]),
                 "outcome": outcome.value,
                 "pnl": pnl,
-                "closing_price": closing_price,
+                "closing_price": closing_price_value,
                 "closing_captured_at": closing_captured_at,
                 "clv": clv,
                 "settled_at": now,

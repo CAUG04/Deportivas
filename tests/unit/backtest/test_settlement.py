@@ -12,10 +12,10 @@ import pandas as pd
 import pytest
 
 from deportivas.backtest.settlement import (
-    _closing_price,
-    _pnl_for_outcome,
-    _signal_outcome,
+    closing_price,
     compute_and_write_results,
+    pnl_for_outcome,
+    signal_outcome,
 )
 from deportivas.config.settings import get_settings
 from deportivas.contracts.tables import FIXTURES, ODDS_SNAPSHOTS, RESULTS, SIGNALS
@@ -110,7 +110,7 @@ def _signal_row(**overrides: object) -> dict[str, object]:
     return base
 
 
-# --- _signal_outcome ---------------------------------------------------
+# --- signal_outcome ---------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -124,10 +124,10 @@ def _signal_row(**overrides: object) -> dict[str, object]:
         ("away", 3, 0, BetOutcome.LOSS),
     ],
 )
-def test_signal_outcome_one_x_two(
+def testsignal_outcome_one_x_two(
     selection: str, home_score: float, away_score: float, expected: BetOutcome
 ) -> None:
-    outcome = _signal_outcome("1x2", selection, None, home_score=home_score, away_score=away_score)
+    outcome = signal_outcome("1x2", selection, None, home_score=home_score, away_score=away_score)
     assert outcome == expected
 
 
@@ -140,10 +140,10 @@ def test_signal_outcome_one_x_two(
         ("no", 2, 1, BetOutcome.LOSS),
     ],
 )
-def test_signal_outcome_btts(
+def testsignal_outcome_btts(
     selection: str, home_score: float, away_score: float, expected: BetOutcome
 ) -> None:
-    outcome = _signal_outcome("btts", selection, None, home_score=home_score, away_score=away_score)
+    outcome = signal_outcome("btts", selection, None, home_score=home_score, away_score=away_score)
     assert outcome == expected
 
 
@@ -157,18 +157,18 @@ def test_signal_outcome_btts(
         ("over", 1, 1.5, BetOutcome.PUSH),
     ],
 )
-def test_signal_outcome_over_under(
+def testsignal_outcome_over_under(
     selection: str, home_score: float, away_score: float, expected: BetOutcome
 ) -> None:
-    outcome = _signal_outcome(
+    outcome = signal_outcome(
         "over_under", selection, 2.5, home_score=home_score, away_score=away_score
     )
     assert outcome == expected
 
 
-def test_signal_outcome_over_under_requires_a_line() -> None:
+def testsignal_outcome_over_under_requires_a_line() -> None:
     with pytest.raises(ValueError, match="requiere una linea"):
-        _signal_outcome("over_under", "over", None, home_score=2, away_score=1)
+        signal_outcome("over_under", "over", None, home_score=2, away_score=1)
 
 
 @pytest.mark.parametrize(
@@ -180,63 +180,63 @@ def test_signal_outcome_over_under_requires_a_line() -> None:
         ("home", 14, 14, BetOutcome.PUSH),
     ],
 )
-def test_signal_outcome_moneyline(
+def testsignal_outcome_moneyline(
     selection: str, home_score: float, away_score: float, expected: BetOutcome
 ) -> None:
-    outcome = _signal_outcome(
+    outcome = signal_outcome(
         "moneyline", selection, None, home_score=home_score, away_score=away_score
     )
     assert outcome == expected
 
 
-def test_signal_outcome_unsupported_market_raises() -> None:
+def testsignal_outcome_unsupported_market_raises() -> None:
     with pytest.raises(ValueError, match="no soportado"):
-        _signal_outcome("asian_handicap", "home", -1.5, home_score=2, away_score=1)
+        signal_outcome("asian_handicap", "home", -1.5, home_score=2, away_score=1)
 
 
-# --- _pnl_for_outcome --------------------------------------------------
+# --- pnl_for_outcome --------------------------------------------------
 
 
 def test_pnl_for_win() -> None:
-    assert _pnl_for_outcome(BetOutcome.WIN, stake_fraction=0.02, entry_price=2.5) == pytest.approx(
+    assert pnl_for_outcome(BetOutcome.WIN, stake_fraction=0.02, entry_price=2.5) == pytest.approx(
         0.03
     )
 
 
 def test_pnl_for_loss() -> None:
-    assert _pnl_for_outcome(BetOutcome.LOSS, stake_fraction=0.02, entry_price=2.5) == pytest.approx(
+    assert pnl_for_outcome(BetOutcome.LOSS, stake_fraction=0.02, entry_price=2.5) == pytest.approx(
         -0.02
     )
 
 
 def test_pnl_for_half_win() -> None:
-    assert _pnl_for_outcome(
+    assert pnl_for_outcome(
         BetOutcome.HALF_WIN, stake_fraction=0.02, entry_price=2.5
     ) == pytest.approx(0.015)
 
 
 def test_pnl_for_half_loss() -> None:
-    assert _pnl_for_outcome(
+    assert pnl_for_outcome(
         BetOutcome.HALF_LOSS, stake_fraction=0.02, entry_price=2.5
     ) == pytest.approx(-0.01)
 
 
 @pytest.mark.parametrize("outcome", [BetOutcome.PUSH, BetOutcome.VOID])
 def test_pnl_for_push_and_void_is_zero(outcome: BetOutcome) -> None:
-    assert _pnl_for_outcome(outcome, stake_fraction=0.02, entry_price=2.5) == 0.0
+    assert pnl_for_outcome(outcome, stake_fraction=0.02, entry_price=2.5) == 0.0
 
 
-# --- _closing_price ----------------------------------------------------
+# --- closing_price ----------------------------------------------------
 
 
-def test_closing_price_prefers_the_is_closing_flag() -> None:
+def testclosing_price_prefers_the_is_closing_flag() -> None:
     odds = pd.DataFrame(
         [
             _odds_row(price=1.8, captured_at=_KICKOFF - timedelta(hours=2), is_closing=False),
             _odds_row(price=1.95, captured_at=_KICKOFF - timedelta(minutes=5), is_closing=True),
         ]
     )
-    result = _closing_price(
+    result = closing_price(
         odds,
         fixture_id=_FIXTURE_ID,
         bookmaker="pinnacle",
@@ -251,14 +251,14 @@ def test_closing_price_prefers_the_is_closing_flag() -> None:
     assert captured_at == _KICKOFF - timedelta(minutes=5)
 
 
-def test_closing_price_falls_back_to_latest_pre_kickoff_snapshot() -> None:
+def testclosing_price_falls_back_to_latest_pre_kickoff_snapshot() -> None:
     odds = pd.DataFrame(
         [
             _odds_row(price=1.8, captured_at=_KICKOFF - timedelta(hours=2), is_closing=False),
             _odds_row(price=1.85, captured_at=_KICKOFF - timedelta(minutes=5), is_closing=False),
         ]
     )
-    result = _closing_price(
+    result = closing_price(
         odds,
         fixture_id=_FIXTURE_ID,
         bookmaker="pinnacle",
@@ -272,11 +272,11 @@ def test_closing_price_falls_back_to_latest_pre_kickoff_snapshot() -> None:
     assert price == pytest.approx(1.85)
 
 
-def test_closing_price_excludes_post_kickoff_snapshots() -> None:
+def testclosing_price_excludes_post_kickoff_snapshots() -> None:
     odds = pd.DataFrame(
         [_odds_row(price=2.5, captured_at=_KICKOFF + timedelta(minutes=10), is_closing=True)]
     )
-    result = _closing_price(
+    result = closing_price(
         odds,
         fixture_id=_FIXTURE_ID,
         bookmaker="pinnacle",
@@ -288,11 +288,11 @@ def test_closing_price_excludes_post_kickoff_snapshots() -> None:
     assert result is None
 
 
-def test_closing_price_none_without_any_matching_odds() -> None:
+def testclosing_price_none_without_any_matching_odds() -> None:
     odds = pd.DataFrame(
         [_odds_row(bookmaker="bet365")]  # otro bookmaker: no cuenta para este cierre
     )
-    result = _closing_price(
+    result = closing_price(
         odds,
         fixture_id=_FIXTURE_ID,
         bookmaker="pinnacle",

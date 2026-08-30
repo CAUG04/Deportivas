@@ -579,5 +579,22 @@ def seed_competitions() -> None:
     _persist(COMPETITIONS, pd.DataFrame(rows), label="competitions")
 
 
+@app.command("current-seasons")
+def current_seasons_command(
+    competition_id: CompetitionId,
+    count: Annotated[
+        int, typer.Option(help="Cuantas temporadas recientes, de la mas nueva a la mas vieja")
+    ] = 2,
+) -> None:
+    """Imprime, separadas por coma, las temporadas recientes de esta
+    competicion -- lo que un workflow de ingesta incremental (Fase 8) pasa
+    directo a --seasons, sin adivinar formatos de temporada a mano. Backfill
+    e incremental son el mismo comando de ingesta; solo cambia esta lista."""
+    from deportivas.domain.seasons import season_labels
+
+    competition = load_competitions().get(competition_id)
+    typer.echo(",".join(season_labels(competition, count=count)))
+
+
 if __name__ == "__main__":  # pragma: no cover - invocado por el entry point, no por los tests
     app()

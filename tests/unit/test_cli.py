@@ -844,3 +844,29 @@ def test_mark_closing_command(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, result.output
     assert calls["competition_id"] == "eng-premier-league"
     assert "odds_snapshots: 5 fila(s) marcadas is_closing" in result.output
+
+
+def test_current_seasons_command() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "current-seasons",
+            "--competition-id",
+            "eng-premier-league",
+            "--count",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    # temporada de futbol, formato "YYZZ" de 4 digitos -- el valor exacto
+    # depende de la fecha en que corra el test, el formato no.
+    assert result.output.strip().isdigit()
+    assert len(result.output.strip()) == 4
+
+
+def test_current_seasons_command_defaults_to_two() -> None:
+    result = runner.invoke(app, ["current-seasons", "--competition-id", "usa-nfl"])
+
+    assert result.exit_code == 0, result.output
+    assert len(result.output.strip().split(",")) == 2

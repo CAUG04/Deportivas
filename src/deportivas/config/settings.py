@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     freshness_warning_hours: int = Field(default=36, gt=0)
     config_dir: Path = CONFIG_DIR
 
+    # --- API (Fase 6, opcional: el frontend estatico no la necesita) ------
+    cors_allow_origins: tuple[str, ...] = ()
+
     @field_validator("log_level")
     @classmethod
     def _upper(cls, value: str) -> str:

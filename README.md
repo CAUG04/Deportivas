@@ -143,6 +143,27 @@ decisiones de diseño (el precio de cierre sin el flag de Fase 8 todavía,
 el stake plano de las baselines, y qué significa aquí
 `min_matches_per_window`).
 
+**Fase 6 — API y export.** `src/deportivas/api/views.py` es la única fuente
+de verdad de "qué ve el consumidor": funciones puras (sin importar
+`fastapi`) que arman modelos Pydantic de solo lectura directamente desde
+los repositorios — competiciones, señales (enriquecidas con nombre de
+equipos y kickoff, para que nadie tenga que volver a unir contra `fixtures`)
+y el reporte de backtest. Dos superficies la consumen, nunca la
+reimplementan:
+
+- **`api/app.py`** — una API FastAPI de solo lectura (`GET /health`,
+  `/competitions`, `/competitions/{id}/signals`, `/competitions/{id}/backtest`)
+  para desarrollo local. Sin autenticación: es una herramienta de un solo
+  operador, no un servicio público.
+- **`export/json_export.py`** — lo que `frontend/` (Fase 7) realmente
+  consume en producción: JSON pre-calculado bajo `Settings.export_dir`
+  (`frontend/public/data/`), sin necesitar un servidor corriendo — coherente
+  con el despliegue a coste $0. `deportivas export run` lo genera.
+
+Ver [alcance de la Fase 6](#alcance-de-la-fase-6) para por qué existen las
+dos vías y en qué difieren (`only_actionable` por defecto en la API viva
+contra todos los tiers en el export).
+
 ## Cobertura objetivo
 
 - **Fútbol europeo:** Premier League, La Liga, Serie A, Bundesliga,
@@ -346,6 +367,38 @@ profundidad según qué datos ya están ingeridos:
   activamente "pospuesto para siempre" de "pospuesto, reprogramado" — hoy
   ese partido simplemente no genera una fila en `results`.
 
+## Alcance de la Fase 6
+
+- **Dos superficies, no una, porque leen datos en momentos distintos.** La
+  API en vivo (`api/app.py`) consulta los repositorios en el instante de
+  cada petición; el export estático (`export/json_export.py`) escribe una
+  foto fija que el frontend sirve sin servidor. `Settings.export_dir`'s
+  propio docstring ("Pre-computed JSON consumed by the static frontend") ya
+  documentaba esta intención desde la Fase 0 — el export es lo que
+  `frontend/` (Fase 7) realmente consume en producción; la API en vivo es
+  para desarrollo local o como vía alternativa, nunca lo contrario.
+- **`only_actionable=True` por defecto en la API viva, pero el export
+  siempre escribe todos los tiers.** Una API se puede volver a consultar
+  con otro filtro; un archivo JSON estático no — dejar `descartar` fuera
+  del export lo haría invisible para siempre, no simplemente no-interesante
+  por defecto. Pedir un `tier` explícito en la API (incluido `descartar`)
+  sigue funcionando: es una consulta con sentido propio, no un accidente.
+- **Sin autenticación en la API en vivo.** Es una herramienta de un solo
+  operador (el propio dueño del proyecto), no un servicio multi-usuario;
+  exponerla más allá de una red de confianza sin añadir autenticación
+  propia queda fuera de este alcance, y se documenta así en el docstring
+  del módulo en vez de fingir que ya está resuelto.
+- **`teams` se lee entera, sin filtrar por competición**, para resolver
+  nombre canónico en `list_signals`: esa tabla no tiene columna
+  `competition_id` (un equipo puede jugar en más de una), así que no hay
+  forma más barata de acotar la lectura sin arriesgarse a dejar un equipo
+  sin nombre.
+- **Una competición desconocida levanta `KeyError`** (404 en la API, fallo
+  ruidoso en el export) en vez de devolver una lista vacía en silencio —
+  igual que las demás validaciones del proyecto, una superficie de lectura
+  pública no debería verse igual cuando el recurso no existe que cuando
+  simplemente no tiene datos todavía.
+
 ## CLI de ingesta
 
 ```bash
@@ -441,6 +494,30 @@ capturar más cuotas de cierre actualiza `closing_price`/`clv` en vez de
 duplicar la fila. `report` no escribe nada — solo lee `results` y `signals`,
 agrega, y muestra el CLV medio (con su intervalo de confianza cuando hay
 datos suficientes) y el ROI, global y desglosado, junto a las baselines.
+
+## CLI de export
+
+```bash
+uv run deportivas export --help
+
+# Una competicion, o todas las habilitadas si se omite --competition-id.
+uv run deportivas export run --competition-id eng-premier-league
+uv run deportivas export run
+```
+
+Escribe `frontend/public/data/competitions.json` y, por competición,
+`{competition_id}/signals.json` + `{competition_id}/backtest.json` — lo que
+el frontend estático (Fase 7) sirve sin necesitar ningún servidor corriendo.
+Sobrescribe los ficheros existentes por completo en cada corrida; no hay
+nada que "actualizar" en un JSON estático.
+
+Para desarrollo local contra la API en vivo en lugar del export (ver
+[alcance de la Fase 6](#alcance-de-la-fase-6) sobre cuándo usar cada una):
+
+```bash
+uv run uvicorn deportivas.api.app:app --reload
+# docs interactivas en http://localhost:8000/docs
+```
 
 ## Arquitectura de datos
 
@@ -570,8 +647,12 @@ src/deportivas/
     bootstrap.py               Intervalo de confianza por remuestreo, generico (CLV o pnl)
     baselines.py                always_favourite / random, mismo instante de cuota que la senal real
     report.py                   CLV/ROI global, por tier, por mercado y contra cada baseline
-  cli.py                   Un comando por adaptador de ingesta, pipeline de features, modelo, senal y backtest
-  api/ export/             (Fase 6+)
+  api/
+    views.py                  Capa de vistas pydantic, sin fastapi -- usada por app.py y export/
+    app.py                     FastAPI de solo lectura, para desarrollo local
+  export/
+    json_export.py            Escribe los mismos datos de views.py como JSON estatico para frontend/
+  cli.py                   Un comando por adaptador de ingesta, pipeline de features, modelo, senal, backtest y export
 alembic/                  Migraciones sobre la metadata de contracts/
 frontend/                 React + Vite + TS + Tailwind (Fase 7)
 tests/

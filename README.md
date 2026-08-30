@@ -78,20 +78,32 @@ abajo para qué se simplificó y por qué.
   `fixtures` — la única señal por partido ingerida hasta ahora para estos
   tres deportes. Comparten el mismo módulo (`features/rest_and_margin.py`).
 
-**Fase 3 — Modelos (en curso).** Núcleo compartido (`src/deportivas/models/`):
-ventanas walk-forward por temporada (`walkforward.py`, regla #3), calibración
+**Fase 3 — Modelos.** Núcleo compartido (`src/deportivas/models/`): ventanas
+walk-forward por temporada (`walkforward.py`, regla #3), calibración
 isotónica/Platt ajustada solo con datos de entrenamiento (`calibration.py`,
-regla #4), y Brier score/log loss/curva de fiabilidad (`metrics.py`). Primer
-modelo real: **fútbol**, un Poisson bivariante (`models/football/`) que
-reutiliza el mismo ajuste de GLM que la feature `strength.py`
-(`features/football/dixon_coles_glm.py`, ahora compartido) pero como modelo
-predictivo — con `home_advantage` e intercepto — en vez de una calificación.
-Cada partido produce una matriz de goles de la que se leen **1x2**,
-**over/under** y **btts** (`config/markets.yaml`'s `derived_from:
-score_matrix`), con una fila en `model_registry` por ventana (métricas por
+regla #4), y Brier score/log loss/curva de fiabilidad (`metrics.py`). Un
+modelo real por cada uno de los 5 deportes:
+
+- **Fútbol**: un Poisson bivariante (`models/football/`) que reutiliza el
+  mismo ajuste de GLM que la feature `strength.py`
+  (`features/football/dixon_coles_glm.py`, ahora compartido) pero como
+  modelo predictivo — con `home_advantage` e intercepto — en vez de una
+  calificación. Cada partido produce una matriz de goles de la que se leen
+  **1x2**, **over/under** y **btts** (`config/markets.yaml`'s
+  `derived_from: score_matrix`).
+- **NFL, NBA, NHL, MLB**: un clasificador logístico de **moneyline**
+  (`models/moneyline.py`, `models/moneyline_training.py`, compartidos;
+  `models/nfl/`, `models/nba/`, `models/nhl/`, `models/mlb/` solo aportan su
+  `feature_set`) entrenado sobre los vectores ya calculados en la Fase 2
+  (`nfl_v1`, `nba_v1`, `nhl_v1`, `mlb_v1`) — a diferencia de fútbol, este no
+  ajusta coeficientes propios desde el marcador: usa las señales que la
+  feature de cada deporte ya produjo.
+
+Cada modelo escribe una fila en `model_registry` por ventana (métricas por
 temporada de validación) y una fila en `predictions` por partido, mercado,
 selección y línea. Ver [alcance de la Fase 3](#alcance-de-la-fase-3) para
-qué queda fuera todavía (modelos de NFL/NBA/NHL/MLB, hándicap asiático).
+qué queda fuera todavía (hándicap asiático, spread/total de los deportes
+americanos).
 
 ## Cobertura objetivo
 
@@ -189,12 +201,13 @@ profundidad según qué datos ya están ingeridos:
 
 ## Alcance de la Fase 3
 
-- **Solo fútbol por ahora.** El modelo Poisson (`models/football/`) es lo que
-  se propuso explícitamente y se aprobó para este primer corte de la Fase 3.
-  Modelos para NFL/NBA/NHL/MLB (moneyline/spread/total — `derived_from:
-  classifier` / `margin_regression` en `config/markets.yaml`, un enfoque
-  distinto al de matriz de goles) quedan para una siguiente entrega dentro
-  de la misma fase, no descartados.
+- **NFL/NBA/NHL/MLB: solo moneyline, no spread ni total.** Ambos son
+  `derived_from: margin_regression` en `config/markets.yaml`, y ese propio
+  archivo señala por qué no traen `default_lines`: la línea real la pone un
+  libro de apuestas en vivo, no hay una rejilla fija que inventar aquí.
+  Escribir una fila en `predictions` con una línea inventada sería un dato
+  fabricado, no una simplificación honesta — así que spread/total esperan a
+  la fase que cruce el modelo con una cuota real capturada.
 - **Poisson independiente, no Dixon-Coles completo.** Sin el ajuste tau de
   baja puntuación (0-0/1-0/0-1/1-1) del paper original — la misma
   simplificación que `dixon_coles_glm.py` ya nombra en su propio docstring.
@@ -212,6 +225,19 @@ profundidad según qué datos ya están ingeridos:
   escondida — la validación *fuera* de muestra (lo que de verdad importa
   para no hacer trampa) sigue siendo estrictamente walk-forward por
   temporada.
+- **El clasificador de moneyline es genérico, no ajustado a mano por
+  deporte.** `models/moneyline.py` es una regresión logística que toma
+  cualquier vector de features tal cual viene de la Fase 2 (imputando lo
+  que falte con la media del propio entrenamiento) — no elige ni pondera
+  columnas por deporte. Es honesto sobre sus límites: la calidad de la
+  predicción depende enteramente de qué tan buenas sean las features de
+  cada deporte, y NBA/NHL/MLB hoy solo tienen descanso/back-to-back/margen
+  rolling (ver el alcance de la Fase 2), no una feature tan rica como el
+  EPA de NFL o el Elo de fútbol.
+- **Empates se excluyen del entrenamiento de moneyline**, no se fuerzan a
+  "no-gana": el mercado `moneyline` solo tiene selecciones `home`/`away`,
+  así que un empate (posible mayormente en NFL) no es una etiqueta valida
+  para ese clasificador.
 
 ## CLI de ingesta
 
@@ -257,6 +283,13 @@ uv run deportivas models --help                # lista cada modelo como comando
 # Requiere que fixtures ya este ingerido, con al menos dos temporadas
 # terminadas (una para entrenar, una para validar).
 uv run deportivas models train-football --competition-id eng-premier-league
+
+# NFL/NBA/NHL/MLB requieren ademas que su pipeline de features ya haya
+# corrido (deportivas features compute-nfl, compute-nba, ...).
+uv run deportivas models train-nfl --competition-id usa-nfl
+uv run deportivas models train-nba --competition-id usa-nba
+uv run deportivas models train-nhl --competition-id usa-nhl
+uv run deportivas models train-mlb --competition-id usa-mlb
 
 # Metodo de calibracion explicito en vez del de config/thresholds.yaml:
 uv run deportivas models train-football \
@@ -378,7 +411,12 @@ src/deportivas/
     walkforward.py           Ventanas walk-forward por temporada (regla #3)
     calibration.py           Calibracion isotonica/Platt, solo con datos de entrenamiento
     metrics.py                Brier score, log loss, curva de fiabilidad
+    features_loader.py        Une la tabla features con el resultado real del fixture
+    feature_matrix.py         Vectoriza dicts de features, imputa con la media de entrenamiento
+    moneyline.py               Clasificador logistico generico P(home win)
+    moneyline_training.py      Walk-forward compartido por NFL/NBA/NHL/MLB
     football/                 Poisson bivariante: matriz de goles -> 1x2/over_under/btts
+    nfl/ nba/ nhl/ mlb/        train.py: wrapper fino sobre moneyline_training.py
   cli.py                   Un comando por adaptador de ingesta, pipeline de features y modelo
   backtest/ signals/ api/ export/   (Fase 4+)
 alembic/                  Migraciones sobre la metadata de contracts/

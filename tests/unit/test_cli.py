@@ -609,3 +609,89 @@ def test_train_football_model_command_defaults_calibration_method_to_none(
     assert result.exit_code == 0, result.output
     assert calls["calibration_method"] is None
     assert "0 ventanas entrenadas" in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "module", "function", "competition_id", "label"),
+    [
+        (
+            "train-nfl",
+            "deportivas.models.nfl.train",
+            "compute_and_write_nfl_moneyline_model",
+            "usa-nfl",
+            "nfl moneyline",
+        ),
+        (
+            "train-nba",
+            "deportivas.models.nba.train",
+            "compute_and_write_nba_moneyline_model",
+            "usa-nba",
+            "nba moneyline",
+        ),
+        (
+            "train-nhl",
+            "deportivas.models.nhl.train",
+            "compute_and_write_nhl_moneyline_model",
+            "usa-nhl",
+            "nhl moneyline",
+        ),
+        (
+            "train-mlb",
+            "deportivas.models.mlb.train",
+            "compute_and_write_mlb_moneyline_model",
+            "usa-mlb",
+            "mlb moneyline",
+        ),
+    ],
+)
+def test_train_moneyline_model_command(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    module: str,
+    function: str,
+    competition_id: str,
+    label: str,
+) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str, *, calibration_method: str | None = None) -> list[int]:
+        calls["competition_id"] = competition_id
+        calls["calibration_method"] = calibration_method
+        return [180, 190]
+
+    monkeypatch.setattr(f"{module}.{function}", _fake)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            command,
+            "--competition-id",
+            competition_id,
+            "--calibration-method",
+            "platt",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == competition_id
+    assert calls["calibration_method"] == "platt"
+    assert f"{label}: 2 ventana(s), 370 filas de predicciones" in result.output
+
+
+def test_train_nfl_model_command_defaults_calibration_method_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str, *, calibration_method: str | None = None) -> list[int]:
+        calls["calibration_method"] = calibration_method
+        return []
+
+    monkeypatch.setattr("deportivas.models.nfl.train.compute_and_write_nfl_moneyline_model", _fake)
+
+    result = runner.invoke(app, ["models", "train-nfl", "--competition-id", "usa-nfl"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["calibration_method"] is None
+    assert "0 ventanas entrenadas" in result.output

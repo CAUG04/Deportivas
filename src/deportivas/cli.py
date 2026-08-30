@@ -360,13 +360,22 @@ def compute_mlb_features_command(competition_id: CompetitionId) -> None:
     typer.echo(f"mlb_v1: {written} filas escritas")
 
 
+CalibrationMethod = Annotated[
+    str | None,
+    typer.Option(help="isotonic | platt. Sin especificar, usa config/thresholds.yaml"),
+]
+
+
+def _echo_training_result(label: str, written: list[int]) -> None:
+    if not written:
+        typer.echo(f"{label}: 0 ventanas entrenadas (datos insuficientes)")
+        return
+    typer.echo(f"{label}: {len(written)} ventana(s), {sum(written)} filas de predicciones")
+
+
 @models_app.command("train-football")
 def train_football_model_command(
-    competition_id: CompetitionId,
-    calibration_method: Annotated[
-        str | None,
-        typer.Option(help="isotonic | platt. Sin especificar, usa config/thresholds.yaml"),
-    ] = None,
+    competition_id: CompetitionId, calibration_method: CalibrationMethod = None
 ) -> None:
     """Poisson bivariante walk-forward por temporada -> model_registry + predictions
     (1x2, over_under, btts). Requiere que fixtures ya este ingerido para esta
@@ -376,10 +385,63 @@ def train_football_model_command(
     written = compute_and_write_football_models(
         competition_id, calibration_method=calibration_method
     )
-    if not written:
-        typer.echo("football poisson: 0 ventanas entrenadas (datos insuficientes)")
-        return
-    typer.echo(f"football poisson: {len(written)} ventana(s), {sum(written)} filas de predicciones")
+    _echo_training_result("football poisson", written)
+
+
+@models_app.command("train-nfl")
+def train_nfl_model_command(
+    competition_id: CompetitionId, calibration_method: CalibrationMethod = None
+) -> None:
+    """Clasificador logistico walk-forward sobre nfl_v1 -> model_registry + predictions
+    (moneyline). Requiere que features compute-nfl ya haya corrido para esta competicion."""
+    from deportivas.models.nfl.train import compute_and_write_nfl_moneyline_model
+
+    written = compute_and_write_nfl_moneyline_model(
+        competition_id, calibration_method=calibration_method
+    )
+    _echo_training_result("nfl moneyline", written)
+
+
+@models_app.command("train-nba")
+def train_nba_model_command(
+    competition_id: CompetitionId, calibration_method: CalibrationMethod = None
+) -> None:
+    """Clasificador logistico walk-forward sobre nba_v1 -> model_registry + predictions
+    (moneyline). Requiere que features compute-nba ya haya corrido para esta competicion."""
+    from deportivas.models.nba.train import compute_and_write_nba_moneyline_model
+
+    written = compute_and_write_nba_moneyline_model(
+        competition_id, calibration_method=calibration_method
+    )
+    _echo_training_result("nba moneyline", written)
+
+
+@models_app.command("train-nhl")
+def train_nhl_model_command(
+    competition_id: CompetitionId, calibration_method: CalibrationMethod = None
+) -> None:
+    """Clasificador logistico walk-forward sobre nhl_v1 -> model_registry + predictions
+    (moneyline). Requiere que features compute-nhl ya haya corrido para esta competicion."""
+    from deportivas.models.nhl.train import compute_and_write_nhl_moneyline_model
+
+    written = compute_and_write_nhl_moneyline_model(
+        competition_id, calibration_method=calibration_method
+    )
+    _echo_training_result("nhl moneyline", written)
+
+
+@models_app.command("train-mlb")
+def train_mlb_model_command(
+    competition_id: CompetitionId, calibration_method: CalibrationMethod = None
+) -> None:
+    """Clasificador logistico walk-forward sobre mlb_v1 -> model_registry + predictions
+    (moneyline). Requiere que features compute-mlb ya haya corrido para esta competicion."""
+    from deportivas.models.mlb.train import compute_and_write_mlb_moneyline_model
+
+    written = compute_and_write_mlb_moneyline_model(
+        competition_id, calibration_method=calibration_method
+    )
+    _echo_training_result("mlb moneyline", written)
 
 
 @app.command("seed-competitions")

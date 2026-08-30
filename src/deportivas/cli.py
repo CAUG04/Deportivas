@@ -36,9 +36,11 @@ app = typer.Typer(help="Ingesta, features y backtest de la plataforma de pronost
 ingest_app = typer.Typer(help="Un comando por adaptador de fuente.")
 features_app = typer.Typer(help="Un comando por pipeline de features (uno por deporte).")
 models_app = typer.Typer(help="Un comando por modelo entrenado (walk-forward por temporada).")
+signals_app = typer.Typer(help="Generacion de senales a partir de predictions + odds_snapshots.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(features_app, name="features")
 app.add_typer(models_app, name="models")
+app.add_typer(signals_app, name="signals")
 
 
 def _seasons_list(seasons: str) -> list[str]:
@@ -442,6 +444,19 @@ def train_mlb_model_command(
         competition_id, calibration_method=calibration_method
     )
     _echo_training_result("mlb moneyline", written)
+
+
+@signals_app.command("generate")
+def generate_signals_command(competition_id: CompetitionId) -> None:
+    """Une predictions con odds_snapshots, quita el margen contra Pinnacle (o su
+    fallback), calcula el edge, clasifica el tier de confianza y el stake de
+    Kelly fraccionado -> signals. Incluye las senales 'descartar': saber a que
+    no apostar tambien se persiste. Requiere que ya existan predictions para
+    esta competicion (comandos ``models train-*``)."""
+    from deportivas.signals.generate import compute_and_write_signals
+
+    written = compute_and_write_signals(competition_id)
+    typer.echo(f"signals: {written} fila(s) escritas")
 
 
 @app.command("seed-competitions")

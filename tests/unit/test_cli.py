@@ -695,3 +695,19 @@ def test_train_nfl_model_command_defaults_calibration_method_to_none(
     assert result.exit_code == 0, result.output
     assert calls["calibration_method"] is None
     assert "0 ventanas entrenadas" in result.output
+
+
+def test_generate_signals_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    def _fake(competition_id: str) -> int:
+        calls["competition_id"] = competition_id
+        return 42
+
+    monkeypatch.setattr("deportivas.signals.generate.compute_and_write_signals", _fake)
+
+    result = runner.invoke(app, ["signals", "generate", "--competition-id", "eng-premier-league"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["competition_id"] == "eng-premier-league"
+    assert "signals: 42 fila(s) escritas" in result.output

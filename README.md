@@ -105,6 +105,23 @@ selección y línea. Ver [alcance de la Fase 3](#alcance-de-la-fase-3) para
 qué queda fuera todavía (hándicap asiático, spread/total de los deportes
 americanos).
 
+**Fase 4 — Señales.** `src/deportivas/signals/` convierte una predicción en
+una decisión: `devig.py` quita el margen de una cuota (multiplicativo, power
+o Shin — los tres coinciden exactamente cuando la cuota no trae margen),
+`tiers.py` clasifica la confianza (alta/media/baja/**descartar**, evaluado
+de arriba a abajo contra `config/thresholds.yaml`'s `tiers`) y `staking.py`
+calcula el stake de Kelly fraccionado (regla #6: nunca Kelly completo, nunca
+progresiones). `generate.py` los une: por cada fila de `predictions`, busca
+en `odds_snapshots` la cuota de Pinnacle (o, si falta, la del primer
+bookmaker de la lista de reserva) capturada entre el `as_of_timestamp` de la
+predicción y el kickoff del partido — nunca antes (no se puede actuar sobre
+una cuota anterior a la propia predicción) ni después (nada de cuotas en
+vivo) —, calcula el edge (`prob_model - prob_fair`) y escribe una fila en
+`signals`, incluidas las que se **descartan**: saber a qué no apostar se
+persiste igual que una apuesta accionable, no se descarta en silencio. Ver
+[alcance de la Fase 4](#alcance-de-la-fase-4) para las decisiones de diseño
+detrás de esa ventana de precio.
+
 ## Cobertura objetivo
 
 - **Fútbol europeo:** Premier League, La Liga, Serie A, Bundesliga,
@@ -239,6 +256,40 @@ profundidad según qué datos ya están ingeridos:
   así que un empate (posible mayormente en NFL) no es una etiqueta valida
   para ese clasificador.
 
+## Alcance de la Fase 4
+
+- **El precio de entrada usa `as_of_timestamp`, no `predicted_at`.**
+  `predicted_at` es el instante de reloj en que corrió el job de
+  entrenamiento — para una ventana walk-forward histórica eso es siempre
+  "ahora", sin importar qué temporada se está validando, así que acotar por
+  ahí dejaría vacía la ventana de cuotas de cualquier predicción histórica y
+  nunca se podría construir una señal para el backtest. `as_of_timestamp` es
+  el corte de información real que el modelo usó (el propio significado que
+  ya tiene esa columna en `predictions`), y por construcción del walk-forward
+  siempre es anterior al kickoff de la temporada de validación — así se
+  pueden generar señales tanto sobre partidos históricos (lo que necesita el
+  backtest de CLV) como sobre los próximos.
+- **Un movimiento de línea "a favor" solo se evalúa entre la cuota de
+  entrada y la última cuota disponible antes del kickoff**, nunca contra una
+  cuota post-kickoff (en vivo). Con menos de `line_move.min_snapshots`
+  momentos capturados, la condición simplemente no se cumple — no se
+  extrapola con un solo dato.
+- **Una sola selección capturada en un instante no se devigea.** Sin al
+  menos dos precios contemporáneos no hay margen que quitar, y normalizar
+  un único precio devolvería una probabilidad "justa" de 1.0 — un dato
+  fabricado, no una simplificación honesta. Esos instantes se descartan en
+  `_market_snapshots` en vez de producir un número engañoso.
+- **`sample_matches` sale de `model_registry.metrics.n_train_matches`**,
+  buscado por `(model_name, model_version)` — esa tabla no tiene columna
+  `competition_id` para filtrar, así que se lee entera una vez por corrida.
+  Si dos filas comparten esa clave (posible porque `model_registry` es
+  `append_only`, ver la Fase 3), gana la última en el orden de lectura del
+  backend activo; no es un problema introducido aquí, y no se resuelve aquí.
+- **No hay backtest todavía.** `signals` registra la decisión (edge, tier,
+  stake) en el momento en que se genera, pero liquidar esa apuesta contra el
+  resultado real y calcular CLV (`results.clv`, la métrica principal del
+  proyecto) es la fase siguiente.
+
 ## CLI de ingesta
 
 ```bash
@@ -300,6 +351,20 @@ A diferencia de `features compute-...`, esto **no** es idempotente por
 diseño: `model_registry` es `append_only` (una fila por corrida de
 entrenamiento, nunca sobreescrita) para conservar el historial completo de
 cada ventana entrenada, incluso si se re-ejecuta el mismo comando dos veces.
+
+## CLI de señales
+
+```bash
+uv run deportivas signals --help
+
+# Requiere que ya existan predictions (deportivas models train-...) y
+# odds_snapshots para la misma competicion.
+uv run deportivas signals generate --competition-id eng-premier-league
+```
+
+Sí es idempotente: `signals.write` hace upsert sobre `id` (regla de todas
+las tablas no `append_only`), así que re-ejecutarlo tras capturar cuotas
+nuevas actualiza cada señal en vez de duplicarla.
 
 ## Arquitectura de datos
 
@@ -417,8 +482,13 @@ src/deportivas/
     moneyline_training.py      Walk-forward compartido por NFL/NBA/NHL/MLB
     football/                 Poisson bivariante: matriz de goles -> 1x2/over_under/btts
     nfl/ nba/ nhl/ mlb/        train.py: wrapper fino sobre moneyline_training.py
-  cli.py                   Un comando por adaptador de ingesta, pipeline de features y modelo
-  backtest/ signals/ api/ export/   (Fase 4+)
+  signals/
+    devig.py                 Quita el margen de la cuota (multiplicativo, power, Shin)
+    tiers.py                  Clasifica alta/media/baja/descartar contra thresholds.yaml
+    staking.py                 Stake de Kelly fraccionado, tope duro
+    generate.py                 Une predictions + odds_snapshots -> signals
+  cli.py                   Un comando por adaptador de ingesta, pipeline de features, modelo y senal
+  backtest/ api/ export/   (Fase 5+)
 alembic/                  Migraciones sobre la metadata de contracts/
 frontend/                 React + Vite + TS + Tailwind (Fase 7)
 tests/

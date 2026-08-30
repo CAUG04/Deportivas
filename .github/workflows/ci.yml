@@ -63,11 +63,37 @@ jobs:
       - name: pytest (con cobertura, incluye backend Postgres; nunca red real)
         run: uv run pytest -m "not network" --cov --cov-report=term-missing
 
+  frontend:
+    name: frontend (lint + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias (lockfile exacto)
+        run: npm ci
+
+      - name: oxlint
+        run: npm run lint
+
+      - name: tsc + vite build
+        run: npm run build
+
   # Cualquier job de este workflow que falle abre un issue automaticamente en
   # vez de fallar en silencio (regla de Fase 10, aplicada desde ya).
   notify-on-failure:
     name: Abrir issue si algo fallo
-    needs: [check]
+    needs: [check, frontend]
     if: failure()
     runs-on: ubuntu-latest
     permissions:

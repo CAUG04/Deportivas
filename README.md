@@ -164,6 +164,15 @@ Ver [alcance de la Fase 6](#alcance-de-la-fase-6) para por qué existen las
 dos vías y en qué difieren (`only_actionable` por defecto en la API viva
 contra todos los tiers en el export).
 
+**Fase 7 — Frontend.** `frontend/` es un sitio estático (Vite + React 19 +
+TypeScript + Tailwind v4) que lee el JSON de `export/json_export.py` bajo
+`public/data/` — sin llamar a ningún servidor, ni siquiera en desarrollo.
+Un selector de competición, una tabla de señales (filtro por tier, incluido
+`descartar`) y el resumen de backtest (CLV medio con su intervalo de
+confianza cuando lo hay, ROI, desglose por tier/mercado, comparación contra
+las baselines) — deliberadamente minimalista: ver
+[alcance de la Fase 7](#alcance-de-la-fase-7) para qué queda fuera y por qué.
+
 ## Cobertura objetivo
 
 - **Fútbol europeo:** Premier League, La Liga, Serie A, Bundesliga,
@@ -399,6 +408,35 @@ profundidad según qué datos ya están ingeridos:
   pública no debería verse igual cuando el recurso no existe que cuando
   simplemente no tiene datos todavía.
 
+## Alcance de la Fase 7
+
+- **MVP deliberadamente minimalista.** Una sola vista (sin router:
+  cambiar de competición es un `<select>`, no una URL distinta), sin
+  librería de componentes ni gestor de estado — `fetch` + `useState` alcanza
+  para leer un puñado de archivos JSON estáticos. Ordenar/paginar la tabla
+  de señales, gráficas de la curva de fiabilidad o de CLV en el tiempo, y
+  cualquier interactividad más allá del filtro por tier quedan fuera hasta
+  que haya una razón concreta para añadirlas.
+- **Sin suite de tests de frontend.** El rigor de 100% de cobertura es una
+  regla del backend Python (`pyproject.toml`'s `[tool.pytest]`); el
+  frontend se verifica con el build de TypeScript en modo `strict`, el
+  linter (`oxlint`) y una verificación visual manual contra datos
+  sintéticos — documentado aquí en vez de fingir una cobertura que no
+  existe. Añadir Vitest/Testing Library es trabajo futuro razonable si el
+  frontend crece más allá de este MVP.
+- **`frontend/public/data/` es generado, no fuente** — `.gitignore` lo
+  excluye salvo un `.gitkeep` que mantiene el directorio. `deportivas
+  export run` lo puebla; sin haberlo corrido antes, el sitio carga y
+  muestra "no se pudo cargar la lista de competiciones" en vez de fallar
+  en blanco — un estado de error legible, no una pantalla vacía sin
+  explicación.
+- **Los tipos TypeScript en `src/types.ts` son un espejo manual** de los
+  modelos Pydantic de `api/views.py`, no generados automáticamente. Si un
+  campo cambia de un lado, hay que cambiarlo del otro a mano; generación
+  automática de tipos (p.ej. desde el `openapi.json` que FastAPI ya expone
+  en `api/app.py`) es una mejora futura razonable, no algo que este MVP
+  necesitaba para demostrar que el patrón export-JSON-estático funciona.
+
 ## CLI de ingesta
 
 ```bash
@@ -596,6 +634,15 @@ make db-up          # Postgres 16 + Adminer vía docker-compose
 make migrate         # aplica alembic/versions/ sobre él
 ```
 
+### Frontend (opcional, Fase 7)
+
+Requisitos: Node 22+.
+
+```bash
+uv run deportivas export run           # puebla frontend/public/data/
+cd frontend && npm install && npm run dev
+```
+
 ## Estructura del repositorio
 
 ```
@@ -654,7 +701,13 @@ src/deportivas/
     json_export.py            Escribe los mismos datos de views.py como JSON estatico para frontend/
   cli.py                   Un comando por adaptador de ingesta, pipeline de features, modelo, senal, backtest y export
 alembic/                  Migraciones sobre la metadata de contracts/
-frontend/                 React + Vite + TS + Tailwind (Fase 7)
+frontend/                 Vite + React 19 + TS + Tailwind v4, lee public/data/*.json
+  src/
+    types.ts                 Espejo manual de los modelos pydantic de api/views.py
+    api.ts                    fetch de competitions.json / {id}/signals.json / {id}/backtest.json
+    useFetch.ts                Hook generico de carga/error para los tres
+    components/                CompetitionSelector, SignalsTable, BacktestSummary, TierBadge
+  public/data/                Generado por "deportivas export run" -- gitignored salvo .gitkeep
 tests/
   unit/ contracts/ fixtures/
 .github/workflows/        CI (incluye servicio Postgres); daily/odds/deploy/sources-health en fases posteriores

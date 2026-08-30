@@ -250,6 +250,15 @@ competitions:
     season_end_month: 10
     sources:
       pybaseball: true
+      # pybaseball.schedule_and_record pide un equipo a la vez, no la liga
+      # completa (limitacion ya documentada en la Fase 1) -- estas son las
+      # abreviaturas que ese propio paquete espera. Sale de aqui, no
+      # hardcodeado en ningun script, para que anadir/renombrar un equipo
+      # sea editar este YAML, no codigo.
+      team_abbreviations:
+        [ARI, ATL, BAL, BOS, CHC, CWS, CIN, CLE, COL, DET, HOU, KC, LAA, LAD,
+         MIA, MIL, MIN, NYM, NYY, OAK, PHI, PIT, SD, SF, SEA, STL, TB, TEX,
+         TOR, WSH]
     odds:
       the_odds_api: baseball_mlb
 

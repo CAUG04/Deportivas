@@ -462,10 +462,50 @@ def test_odds_snapshot_command_with_key(monkeypatch: pytest.MonkeyPatch) -> None
         "sport_key": "soccer_epl",
         "season": "2526",
         "market_map": {"h2h": "1x2", "spreads": "asian_handicap"},
+        "regions": "uk,eu,us",
     }
     init_kwargs = calls["init"]
     assert isinstance(init_kwargs, dict)
     assert init_kwargs["api_key"] == "test-key"
+
+
+def test_odds_snapshot_command_custom_regions(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+    monkeypatch.setenv("DEPORTIVAS_THE_ODDS_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+    class _FakeTheOddsApiSource:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def fetch_odds(self, **kwargs: object) -> pd.DataFrame:
+            calls["fetch"] = kwargs
+            return pd.DataFrame()
+
+    monkeypatch.setattr(
+        "deportivas.ingest.sources.theoddsapi.TheOddsApiSource", _FakeTheOddsApiSource
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "odds-snapshot",
+            "--competition-id",
+            "eng-premier-league",
+            "--sport-key",
+            "soccer_epl",
+            "--season",
+            "2526",
+            "--market-map",
+            "h2h:1x2",
+            "--regions",
+            "eu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls["fetch"]["regions"] == "eu"  # type: ignore[index]
 
 
 def test_seed_competitions_writes_catalog(tmp_path: Path) -> None:

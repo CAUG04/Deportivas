@@ -304,6 +304,18 @@ def odds_snapshot(
             help="raw:nuestro separados por coma, p.ej. h2h:1x2,spreads:asian_handicap,totals:over_under"
         ),
     ],
+    regions: Annotated[
+        str,
+        typer.Option(
+            help=(
+                "Regiones de casas de apuestas separadas por coma (formato de The Odds API, "
+                "p.ej. uk,eu,us). Cada region adicional multiplica el gasto de creditos del "
+                "plan gratuito (500/mes) por el numero de mercados pedidos -- Pinnacle "
+                "(la referencia de este proyecto, ver thresholds.yaml) vive en 'eu' sola, "
+                "asi que un workflow con presupuesto ajustado (Fase 9) puede pasar solo esa."
+            )
+        ),
+    ] = "uk,eu,us",
 ) -> None:
     """The Odds API: snapshot de cuotas en vivo -> odds_snapshots. Requiere DEPORTIVAS_THE_ODDS_API_KEY."""
     from deportivas.ingest.sources.theoddsapi import TheOddsApiSource
@@ -321,7 +333,11 @@ def odds_snapshot(
         api_key=settings.the_odds_api_key.get_secret_value(),
     )
     df = source.fetch_odds(
-        competition_id=competition_id, sport_key=sport_key, season=season, market_map=parsed_map
+        competition_id=competition_id,
+        sport_key=sport_key,
+        season=season,
+        market_map=parsed_map,
+        regions=regions,
     )
     _persist(ODDS_SNAPSHOTS, df, label="theoddsapi odds")
 

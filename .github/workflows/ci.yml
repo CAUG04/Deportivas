@@ -90,48 +90,14 @@ jobs:
         run: npm run build
 
   # Cualquier job de este workflow que falle abre un issue automaticamente en
-  # vez de fallar en silencio (regla de Fase 10, aplicada desde ya).
+  # vez de fallar en silencio (regla de Fase 10, aplicada desde ya). Job
+  # reutilizable (notify-failure.yml) compartido con daily.yml/odds.yml.
   notify-on-failure:
-    name: Abrir issue si algo fallo
     needs: [check, frontend]
     if: failure()
-    runs-on: ubuntu-latest
     permissions:
       issues: write
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            const title = `CI en rojo: ${context.workflow} (${context.sha.slice(0, 7)})`;
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = [
-              `El workflow **${context.workflow}** fallo en el commit ${context.sha}.`,
-              '',
-              `Ejecucion: ${runUrl}`,
-              `Branch/ref: \`${context.ref}\``,
-            ].join('\n');
-
-            const { data: existing } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'ci-failure',
-            });
-            const duplicate = existing.find((issue) => issue.title === title);
-            if (duplicate) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: duplicate.number,
-                body: `Volvio a fallar: ${runUrl}`,
-              });
-              return;
-            }
-
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body,
-              labels: ['ci-failure'],
-            });
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      workflow-name: CI
+      label: ci-failure

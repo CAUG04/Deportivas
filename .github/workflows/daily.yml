@@ -1,0 +1,75 @@
+name: Daily
+
+# Fase 8/9: ingesta incremental de calendario/stats (segun la cadencia
+# daily/weekly de cada competicion), entrenamiento de modelos, cierre de
+# linea, senales y liquidacion -- todo lo que scripts/run_daily_pipeline.sh
+# ya decide por competicion. Este workflow solo aporta lo que un script
+# local no puede: el cron, y el Release de GitHub que hace de disco
+# persistente entre corridas (ver "Arquitectura de despliegue gratuito" en
+# el README).
+#
+# No construye ni publica el frontend: deploy.yml hace el export a JSON y
+# el build justo despues, encadenado por "workflow_run" sobre este workflow
+# y sobre Odds -- asi el sitio siempre exporta el dato mas fresco posible
+# sin que este workflow tenga que saber nada de Vite ni de GitHub Pages.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC, todos los dias
+  workflow_dispatch:
+
+# Mismo grupo que odds.yml a proposito: ambos leen y publican el mismo
+# asset del Release "data-lake" (scripts/{restore,publish}_data_lake.sh), y
+# dos corridas escribiendolo a la vez se pisarian una a otra. "queue" en vez
+# de "cancel-in-progress" para que una corrida completa siempre termine de
+# publicar antes de que empiece la siguiente.
+concurrency:
+  group: deportivas-data-lake
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  daily-pipeline:
+    name: Ingesta incremental + modelos + liquidacion
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.6"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Instalar Python 3.11
+        run: uv python install 3.11
+
+      - name: Instalar dependencias (lockfile exacto)
+        run: uv sync --all-extras --frozen
+
+      - name: Restaurar data lake (GitHub Release)
+        run: ./scripts/restore_data_lake.sh
+
+      - name: Pipeline diario
+        run: ./scripts/run_daily_pipeline.sh
+
+      - name: Publicar data lake (GitHub Release)
+        if: always()
+        run: ./scripts/publish_data_lake.sh
+
+  notify-on-failure:
+    needs: [daily-pipeline]
+    if: failure()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      workflow-name: Daily
+      label: pipeline-failure

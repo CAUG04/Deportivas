@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# Umbrales de decision. NUNCA hardcodear estos numeros en el codigo.
+# Cambiar un umbral aqui debe cambiar el comportamiento del backtest sin tocar
+# una sola linea de Python.
+# ---------------------------------------------------------------------------
+version: 1
+
+# --- Como se quita el margen de la cuota para obtener la probabilidad justa --
+devig:
+  method: shin                    # multiplicative | power | shin
+  reference_bookmaker: pinnacle
+  # Si no hay precio de Pinnacle para ese partido y mercado, cae a esta lista
+  # en orden. Si no hay ninguno, la senal se marca como "solo casas blandas".
+  fallback_bookmakers: [betfair_ex, bet365]
+
+# --- Clasificacion en tiers de confianza (Fase 5) --------------------------
+# Todas las condiciones de un tier deben cumplirse. Se evalua de alta a baja y
+# se asigna el primer tier cuyas condiciones se satisfagan.
+tiers:
+  alta:
+    min_edge: 0.04                # 4% contra la linea justa
+    min_sample_matches: 300       # historico en esa competicion Y mercado
+    requires_calibration: true
+    requires_sharp_price: true    # el edge debe medirse contra Pinnacle
+    requires_favourable_line_move: true
+  media:
+    min_edge: 0.02
+    min_sample_matches: 300
+    requires_calibration: true
+    requires_sharp_price: true
+    requires_favourable_line_move: false
+  baja:
+    min_edge: 0.0
+    min_sample_matches: 0
+    requires_calibration: false
+    requires_sharp_price: false
+    requires_favourable_line_move: false
+  # Todo lo que no alcanza "baja" cae en "descartar". Es una salida valida y
+  # se muestra en la interfaz: saber a que NO apostar es parte del producto.
+
+# Movimiento de linea "a favor": la cuota justa de la seleccion ha bajado al
+# menos este porcentaje entre nuestra captura de entrada y la ultima captura.
+line_move:
+  favourable_drop: 0.01
+  min_snapshots: 2
+
+# --- Calibracion ----------------------------------------------------------
+calibration:
+  method: isotonic                # isotonic | platt
+  min_training_samples: 500
+  # Un modelo cuyo Brier score supere esto no se despliega.
+  max_brier_score: 0.25
+  reliability_bins: 10
+
+# --- Staking: solo Kelly fraccionado. Nada de progresiones. ----------------
+staking:
+  kelly_fraction: 0.25
+  max_stake_per_bet: 0.02         # 2% del bankroll, tope duro
+  min_stake_per_bet: 0.001        # por debajo de esto no se emite senal
+  bankroll_unit: 1.0
+
+# --- Backtest -------------------------------------------------------------
+backtest:
+  bootstrap_iterations: 2000
+  confidence_level: 0.95
+  min_matches_per_window: 50
+  baselines: [always_favourite, random]
+
+# --- Muestra minima para considerar una competicion "con datos suficientes" -
+data_sufficiency:
+  min_matches_with_odds: 300
+  min_seasons: 2

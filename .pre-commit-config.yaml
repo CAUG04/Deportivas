@@ -1,0 +1,32 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # mypy corre en el entorno del propio proyecto (via uv), no en el env
+  # aislado que crea el hook oficial mirrors-mypy: el proyecto ya trae todas
+  # sus dependencias (pandera, duckdb, pyarrow...) resueltas en uv.lock, y
+  # duplicarlas en additional_dependencies solo las desincroniza con el tiempo.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (uv run, entorno del proyecto)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false

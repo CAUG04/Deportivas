@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Secretos y entorno
+.env
+.env.local
+
+# Datos: nunca en git. Los Parquet viajan como assets de GitHub Releases.
+# "data/*" (no "data/") para que la excepcion de abajo pueda entrar al
+# directorio: si se ignora el directorio entero, git ni siquiera evalua
+# negaciones de archivos concretos dentro de el.
+data/*
+!data/.gitkeep
+*.duckdb
+*.duckdb.wal
+*.parquet
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# Sistema
+.DS_Store

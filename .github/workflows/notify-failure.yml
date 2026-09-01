@@ -1,0 +1,64 @@
+name: Notificar fallo (reutilizable)
+
+# Job compartido por cada workflow de automatizacion (CI, Daily, Odds,
+# Deploy, Sources health): abre un issue etiquetado, o comenta en el ya
+# abierto para ese workflow, en vez de fallar en silencio (regla de Fase
+# 10). "workflow_call" en vez de copiar este bloque una vez por workflow --
+# mismo principio de "una sola fuente de verdad" que el proyecto ya aplica
+# en Python (ver contracts/tables.py sobre el esquema declarado una vez).
+
+on:
+  workflow_call:
+    inputs:
+      workflow-name:
+        description: Nombre legible del workflow que fallo, para el titulo del issue.
+        required: true
+        type: string
+      label:
+        description: Etiqueta de issue a usar/crear (agrupa reintentos del mismo workflow).
+        required: true
+        type: string
+
+jobs:
+  notify:
+    name: Abrir issue si algo fallo
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `${{ inputs.workflow-name }} en rojo (${context.sha.slice(0, 7)})`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `El workflow **${{ inputs.workflow-name }}** fallo en el commit ${context.sha}.`,
+              '',
+              `Ejecucion: ${runUrl}`,
+              `Branch/ref: \`${context.ref}\``,
+            ].join('\n');
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: '${{ inputs.label }}',
+            });
+            const duplicate = existing.find((issue) => issue.title === title);
+            if (duplicate) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: duplicate.number,
+                body: `Volvio a fallar: ${runUrl}`,
+              });
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['${{ inputs.label }}'],
+            });

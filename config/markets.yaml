@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Mercados soportados. "needs_line" indica que la seleccion no tiene sentido
+# sin un numero asociado (hándicap o total). "derived_from" documenta de donde
+# sale la probabilidad: la matriz de goles del modelo, o un modelo directo.
+# ---------------------------------------------------------------------------
+version: 1
+
+markets:
+  # --- Futbol ---------------------------------------------------------------
+  - id: 1x2
+    name: 1X2
+    sports: [football]
+    selections: [home, draw, away]
+    needs_line: false
+    derived_from: score_matrix
+
+  - id: over_under
+    name: Over/Under goles
+    sports: [football]
+    selections: [over, under]
+    needs_line: true
+    default_lines: [1.5, 2.5, 3.5]
+    derived_from: score_matrix
+
+  - id: btts
+    name: Ambos equipos marcan
+    sports: [football]
+    selections: ["yes", "no"]
+    needs_line: false
+    derived_from: score_matrix
+
+  - id: asian_handicap
+    name: Hándicap asiatico
+    sports: [football]
+    selections: [home, away]
+    needs_line: true
+    default_lines: [-1.5, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.5]
+    derived_from: score_matrix
+
+  # --- Deportes americanos --------------------------------------------------
+  - id: moneyline
+    name: Moneyline
+    sports: [american_football, basketball, baseball, ice_hockey]
+    selections: [home, away]
+    needs_line: false
+    derived_from: classifier
+
+  - id: spread
+    name: Spread
+    sports: [american_football, basketball, ice_hockey]
+    selections: [home, away]
+    needs_line: true
+    derived_from: margin_regression
+
+  - id: total
+    name: Total de puntos
+    sports: [american_football, basketball, baseball, ice_hockey]
+    selections: [over, under]
+    needs_line: true
+    derived_from: margin_regression
+
+# Casas de apuestas. Pinnacle es la referencia para la linea justa porque su
+# margen es bajo y su cierre es el mejor estimador publico de la probabilidad
+# real. El resto se clasifican como "blandas": batirlas no demuestra ventaja.
+bookmakers:
+  sharp: [pinnacle]
+  soft: [bet365, williamhill, betfair_ex, unibet, betsson, wplay, betplay, codere, rushbet]

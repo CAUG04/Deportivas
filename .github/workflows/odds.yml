@@ -1,0 +1,73 @@
+name: Odds
+
+# Fase 9: captura de cuotas en vivo (The Odds API) para toda competicion
+# habilitada, seguida del mismo cierre de linea + senales + liquidacion que
+# daily.yml corre -- una cuota nueva puede convertir una senal "descartar"
+# en accionable sin que el calendario haya cambiado. Ver el docstring de
+# scripts/run_odds_pipeline.sh para el presupuesto de creditos (500/mes,
+# plan gratuito) detras de esta cadencia y de --regions eu.
+#
+# Cron: lunes y jueves, ~9 corridas/mes -- con 1 region y los mercados
+# declarados en run_odds_pipeline.sh, esto cuesta ~44 creditos por corrida,
+# bien por debajo del presupuesto mensual con margen para reintentos
+# manuales (workflow_dispatch) y las llamadas de sources-health.yml (que no
+# gastan credito: solo consultan /v4/sports).
+
+on:
+  schedule:
+    - cron: "0 12 * * 1,4" # 12:00 UTC, lunes y jueves
+  workflow_dispatch:
+
+# Mismo grupo que daily.yml a proposito: los dos leen y publican el mismo
+# asset del Release "data-lake" (scripts/{restore,publish}_data_lake.sh).
+concurrency:
+  group: deportivas-data-lake
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  DEPORTIVAS_THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+
+jobs:
+  odds-pipeline:
+    name: Captura de cuotas + liquidacion
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.6"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Instalar Python 3.11
+        run: uv python install 3.11
+
+      - name: Instalar dependencias (lockfile exacto)
+        run: uv sync --all-extras --frozen
+
+      - name: Restaurar data lake (GitHub Release)
+        run: ./scripts/restore_data_lake.sh
+
+      - name: Pipeline de cuotas
+        run: ./scripts/run_odds_pipeline.sh
+
+      - name: Publicar data lake (GitHub Release)
+        if: always()
+        run: ./scripts/publish_data_lake.sh
+
+  notify-on-failure:
+    needs: [odds-pipeline]
+    if: failure()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      workflow-name: Odds
+      label: pipeline-failure

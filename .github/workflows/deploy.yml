@@ -1,0 +1,106 @@
+name: Deploy
+
+# Fase 7/9: exporta el data lake mas reciente a JSON estatico y publica
+# frontend/ en GitHub Pages. Deliberadamente separado de daily.yml/odds.yml
+# (que solo producen datos): este workflow es el unico que sabe de Vite y
+# de Pages, encadenado por "workflow_run" justo despues de que cualquiera
+# de los dos termine, para que el sitio siempre muestre el dato mas fresco
+# sin que la logica de negocio tenga que saber nada de despliegue.
+#
+# Tambien corre en cada push a main que toque frontend/ -- un cambio de UI
+# no deberia esperar a la proxima corrida de datos para verse publicado.
+#
+# Requisito de configuracion, una sola vez, manual (fuera del alcance de
+# este repositorio): Settings > Pages > Source = "GitHub Actions".
+
+on:
+  workflow_run:
+    workflows: [Daily, Odds]
+    types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build:
+    name: Export JSON + build frontend
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.6"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Instalar Python 3.11
+        run: uv python install 3.11
+
+      - name: Instalar dependencias (lockfile exacto)
+        run: uv sync --all-extras --frozen
+
+      - name: Restaurar data lake (GitHub Release)
+        run: ./scripts/restore_data_lake.sh
+
+      - name: Export estatico (deportivas export run)
+        run: uv run deportivas export run
+
+      - name: Instalar Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias del frontend (lockfile exacto)
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build (tsc + vite)
+        working-directory: frontend
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    name: Publicar en GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  notify-on-failure:
+    needs: [build, deploy]
+    if: failure()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      workflow-name: Deploy
+      label: pipeline-failure

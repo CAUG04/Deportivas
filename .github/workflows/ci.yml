@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancela ejecuciones anteriores del mismo PR/branch cuando llega un push nuevo.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint + typecheck + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      # Backend secundario (dev local / migracion futura). El workflow lo
+      # trae arriba para que test_sql_repository.py (marcado "postgres",
+      # desactivado por defecto en local) corra de verdad en cada CI.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: deportivas
+          POSTGRES_PASSWORD: deportivas
+          POSTGRES_DB: deportivas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U deportivas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DEPORTIVAS_DATABASE_URL: postgresql+psycopg://deportivas:deportivas@localhost:5432/deportivas
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.6"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Instalar Python 3.11
+        run: uv python install 3.11
+
+      - name: Instalar dependencias (lockfile exacto)
+        run: uv sync --all-extras --frozen
+
+      - name: Ruff (lint)
+        run: uv run ruff check src tests alembic
+
+      - name: Ruff (formato)
+        run: uv run ruff format --check src tests alembic
+
+      - name: mypy (strict)
+        run: uv run mypy
+
+      - name: pytest (con cobertura, incluye backend Postgres; nunca red real)
+        run: uv run pytest -m "not network" --cov --cov-report=term-missing
+
+  frontend:
+    name: frontend (lint + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias (lockfile exacto)
+        run: npm ci
+
+      - name: oxlint
+        run: npm run lint
+
+      - name: tsc + vite build
+        run: npm run build
+
+  # Cualquier job de este workflow que falle abre un issue automaticamente en
+  # vez de fallar en silencio (regla de Fase 10, aplicada desde ya). Job
+  # reutilizable (notify-failure.yml) compartido con daily.yml/odds.yml.
+  notify-on-failure:
+    needs: [check, frontend]
+    if: failure()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      workflow-name: CI
+      label: ci-failure

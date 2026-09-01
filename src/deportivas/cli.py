@@ -86,7 +86,14 @@ CompetitionId = Annotated[
 ]
 Seasons = Annotated[str, typer.Option(help="Temporadas separadas por coma, p.ej. 2223,2324,2425")]
 LeagueKey = Annotated[
-    str, typer.Option(help="Clave de liga en la fuente (ver sources: en competitions.yaml)")
+    str,
+    typer.Option(
+        help=(
+            "sources.soccerdata_key de competitions.yaml (p.ej. 'ENG-Premier League'), NUNCA "
+            "sources.fbref/understat/match_history/espn de esa misma liga -- soccerdata resuelve "
+            "el nombre propio de cada lector a partir de esa clave, no al reves."
+        )
+    ),
 ]
 
 

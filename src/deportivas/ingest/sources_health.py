@@ -70,12 +70,17 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
     if not football:
         return []
 
+    # DEBE correr antes de importar cualquier adaptador de sources/: ese
+    # import dispara "import soccerdata", que computa su LEAGUE_DICT una
+    # sola vez, leyendo league_dict.json en ese instante -- ver el
+    # docstring de ingest/soccerdata_config.py.
+    ensure_custom_league_dict()
+
     from deportivas.ingest.sources.espn import EspnSource
     from deportivas.ingest.sources.fbref import FBrefSource
     from deportivas.ingest.sources.footballdata import FootballDataSource
     from deportivas.ingest.sources.understat import UnderstatSource
 
-    ensure_custom_league_dict()
     settings = get_settings()
     raw_repo = get_raw_document_repository()
     aliases = TeamAliasResolver(
@@ -106,9 +111,20 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
 
     issues: list[HealthIssue] = []
     for competition in football:
-        season = season_labels(competition, count=1)[0]
         sources = competition.sources
+        league_key = sources.soccerdata_key
+        if league_key is None:
+            issues.append(HealthIssue(competition.id, "sources.soccerdata_key", "no configurado"))
+            continue
+        season = season_labels(competition, count=1)[0]
 
+        # Todo lector de soccerdata (FBref/Understat/ESPN/MatchHistory)
+        # espera la CLAVE de LEAGUE_DICT (sources.soccerdata_key, p.ej.
+        # "ENG-Premier League") en "leagues=" -- soccerdata resuelve el
+        # nombre propio de cada lector (sources.fbref/understat/espn/
+        # match_history) por su cuenta a partir de esa clave. Pasarle el
+        # alias en vez de la clave es exactamente el bug que este chequeo
+        # encontro en produccion la primera vez que corrio de verdad.
         if sources.fbref is not None:
             issues += _try(
                 competition.id,
@@ -116,7 +132,7 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
                 functools.partial(
                     fbref.fetch_schedule,
                     competition_id=competition.id,
-                    fbref_league=sources.fbref,
+                    fbref_league=league_key,
                     seasons=[season],
                 ),
             )
@@ -127,7 +143,7 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
                 functools.partial(
                     understat.fetch_team_match_stats,
                     competition_id=competition.id,
-                    understat_league=sources.understat,
+                    understat_league=league_key,
                     seasons=[season],
                 ),
             )
@@ -138,7 +154,7 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
                 functools.partial(
                     footballdata.fetch_games,
                     competition_id=competition.id,
-                    match_history_league=sources.match_history,
+                    match_history_league=league_key,
                     seasons=[season],
                 ),
             )
@@ -151,7 +167,7 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
                 functools.partial(
                     espn.fetch_schedule,
                     competition_id=competition.id,
-                    espn_league=sources.espn,
+                    espn_league=league_key,
                     seasons=[season],
                 ),
             )

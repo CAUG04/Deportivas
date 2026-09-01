@@ -45,7 +45,7 @@ def _competition(**overrides: object) -> Competition:
         "seasons_back": 5,
         "refresh": RefreshCadence.DAILY,
         "enabled": True,
-        "sources": CompetitionSources(fbref="Premier League"),
+        "sources": CompetitionSources(fbref="Premier League", soccerdata_key="ENG-Premier League"),
         "odds": CompetitionOdds(the_odds_api="soccer_epl"),
     }
     base.update(overrides)
@@ -62,11 +62,23 @@ def test_no_football_competitions_returns_no_issues_and_touches_nothing() -> Non
     assert check_football_sources([nfl]) == []
 
 
-def test_football_competition_without_any_configured_source_is_a_no_op() -> None:
-    # No pasa hoy en config/competitions.yaml (toda liga declara fbref), pero
-    # CompetitionSources lo permite: no debe intentar ni fallar nada.
+def test_football_competition_without_soccerdata_key_is_reported() -> None:
+    # No pasa hoy en config/competitions.yaml (toda liga de futbol declara
+    # soccerdata_key), pero CompetitionSources lo permite: sin esa clave
+    # ningun lector de soccerdata puede resolver la liga, asi que se reporta
+    # como hallazgo en vez de saltarse en silencio.
     bare = _competition(sources=CompetitionSources())
-    assert check_football_sources([bare]) == []
+    assert check_football_sources([bare]) == [
+        HealthIssue("eng-premier-league", "sources.soccerdata_key", "no configurado")
+    ]
+
+
+def test_football_competition_with_key_but_no_alias_fields_is_a_no_op() -> None:
+    # soccerdata_key presente pero ningun alias configurado (fbref/
+    # understat/match_history/espn): no hay nada que consultar, y no debe
+    # tocar ningun adaptador para llegar a esa conclusion.
+    only_key = _competition(sources=CompetitionSources(soccerdata_key="ENG-Premier League"))
+    assert check_football_sources([only_key]) == []
 
 
 def test_fbref_only_success_reports_no_issue(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,8 +91,37 @@ def test_fbref_only_success_reports_no_issue(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr("deportivas.ingest.sources.fbref.FBrefSource", _FakeFBrefSource)
 
-    competition = _competition(sources=CompetitionSources(fbref="Premier League"))
+    competition = _competition(
+        sources=CompetitionSources(fbref="Premier League", soccerdata_key="ENG-Premier League")
+    )
     assert check_football_sources([competition]) == []
+
+
+def test_fbref_receives_the_soccerdata_key_not_the_fbref_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regresion: soccerdata.FBref espera la clave de LEAGUE_DICT
+    # (soccerdata_key, p.ej. "ENG-Premier League") en "leagues=", nunca el
+    # alias sources.fbref ("Premier League") -- ese fue exactamente el bug
+    # que este chequeo encontro la primera vez que corrio en produccion.
+    calls: dict[str, object] = {}
+
+    class _FakeFBrefSource:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def fetch_schedule(self, **kwargs: object) -> pd.DataFrame:
+            calls["fetch"] = kwargs
+            return pd.DataFrame()
+
+    monkeypatch.setattr("deportivas.ingest.sources.fbref.FBrefSource", _FakeFBrefSource)
+
+    competition = _competition(
+        sources=CompetitionSources(fbref="Premier League", soccerdata_key="ENG-Premier League")
+    )
+    check_football_sources([competition])
+
+    assert calls["fetch"]["fbref_league"] == "ENG-Premier League"  # type: ignore[index]
 
 
 def test_fbref_failure_is_reported_by_competition_and_field(
@@ -147,18 +188,22 @@ def test_understat_checked_only_when_configured(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr("deportivas.ingest.sources.understat.UnderstatSource", _FakeUnderstatSource)
 
     with_understat = _competition(
-        sources=CompetitionSources(fbref="Premier League", understat="EPL")
+        sources=CompetitionSources(
+            fbref="Premier League", understat="EPL", soccerdata_key="ENG-Premier League"
+        )
     )
     expected_season = season_labels(with_understat, count=1)[0]
     check_football_sources([with_understat])
     assert calls["understat"] == {
         "competition_id": "eng-premier-league",
-        "understat_league": "EPL",
+        "understat_league": "ENG-Premier League",  # la clave, no el alias "EPL"
         "seasons": [expected_season],
     }
 
     calls.clear()
-    without_understat = _competition(sources=CompetitionSources(fbref="Premier League"))
+    without_understat = _competition(
+        sources=CompetitionSources(fbref="Premier League", soccerdata_key="ENG-Premier League")
+    )
     check_football_sources([without_understat])
     assert "understat" not in calls
 
@@ -196,11 +241,19 @@ def test_match_history_checked_when_configured(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("deportivas.ingest.sources.espn.EspnSource", _FakeEspnSource)
 
     with_match_history = _competition(
-        sources=CompetitionSources(fbref="Premier League", match_history="E0", espn="eng.1")
+        sources=CompetitionSources(
+            fbref="Premier League",
+            match_history="E0",
+            espn="eng.1",
+            soccerdata_key="ENG-Premier League",
+        )
     )
     check_football_sources([with_match_history])
     assert "footballdata" in calls
     assert "espn" not in calls
+    footballdata_kwargs = calls["footballdata"]
+    assert isinstance(footballdata_kwargs, dict)
+    assert footballdata_kwargs["match_history_league"] == "ENG-Premier League"  # no "E0"
 
 
 def test_espn_is_the_fallback_when_no_match_history(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -225,13 +278,14 @@ def test_espn_is_the_fallback_when_no_match_history(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("deportivas.ingest.sources.espn.EspnSource", _FakeEspnSource)
 
     colombia = _competition(
-        id="col-primera-a", sources=CompetitionSources(fbref="Primera A", espn="col.1")
+        id="col-primera-a",
+        sources=CompetitionSources(fbref="Primera A", espn="col.1", soccerdata_key="COL-Primera A"),
     )
     expected_season = season_labels(colombia, count=1)[0]
     check_football_sources([colombia])
     assert calls["espn"] == {
         "competition_id": "col-primera-a",
-        "espn_league": "col.1",
+        "espn_league": "COL-Primera A",  # la clave, no el alias "col.1"
         "seasons": [expected_season],
     }
 

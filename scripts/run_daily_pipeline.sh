@@ -54,32 +54,44 @@ while IFS= read -r competition; do
 
     case "$sport" in
     football)
+        # sources.fbref/understat/match_history/espn son solo alias legibles
+        # (lo que ingest/soccerdata_config.py inyecta en el league_dict.json
+        # de soccerdata); se usan aqui unicamente para decidir SI esa fuente
+        # aplica a esta competicion. Todo lector de soccerdata espera la
+        # CLAVE de LEAGUE_DICT (soccerdata_key, p.ej. "ENG-Premier League")
+        # en --*-league -- pasarle el alias en vez de la clave es el bug que
+        # sources-health.yml encontro en produccion la primera vez que corrio.
+        soccerdata_key="$(jq -r '.soccerdata_key // empty' <<<"$sources")"
         fbref_league="$(jq -r '.fbref // empty' <<<"$sources")"
         understat_league="$(jq -r '.understat // empty' <<<"$sources")"
         match_history_league="$(jq -r '.match_history // empty' <<<"$sources")"
         espn_league="$(jq -r '.espn // empty' <<<"$sources")"
 
-        if [ -n "$fbref_league" ]; then
-            run uv run deportivas ingest fbref-schedule \
-                --competition-id "$id" --fbref-league "$fbref_league" --seasons "$seasons"
-            run uv run deportivas ingest fbref-stats \
-                --competition-id "$id" --fbref-league "$fbref_league" --seasons "$seasons"
-        fi
-        if [ -n "$understat_league" ]; then
-            run uv run deportivas ingest understat-stats \
-                --competition-id "$id" --understat-league "$understat_league" --seasons "$seasons"
-        fi
-        if [ -n "$match_history_league" ]; then
-            run uv run deportivas ingest footballdata-games \
-                --competition-id "$id" --match-history-league "$match_history_league" --seasons "$seasons"
-            run uv run deportivas ingest footballdata-odds \
-                --competition-id "$id" --match-history-league "$match_history_league" --seasons "$seasons"
-        elif [ -n "$espn_league" ]; then
-            # Sin football-data.co.uk (UEFA, Liga BetPlay): ESPN es el
-            # respaldo de calendario -- ver README, "unica fuente para Liga
-            # BetPlay Dimayor".
-            run uv run deportivas ingest espn-schedule \
-                --competition-id "$id" --espn-league "$espn_league" --seasons "$seasons"
+        if [ -z "$soccerdata_key" ]; then
+            echo "  aviso: ${id} sin sources.soccerdata_key en competitions.yaml -- se salta futbol"
+        else
+            if [ -n "$fbref_league" ]; then
+                run uv run deportivas ingest fbref-schedule \
+                    --competition-id "$id" --fbref-league "$soccerdata_key" --seasons "$seasons"
+                run uv run deportivas ingest fbref-stats \
+                    --competition-id "$id" --fbref-league "$soccerdata_key" --seasons "$seasons"
+            fi
+            if [ -n "$understat_league" ]; then
+                run uv run deportivas ingest understat-stats \
+                    --competition-id "$id" --understat-league "$soccerdata_key" --seasons "$seasons"
+            fi
+            if [ -n "$match_history_league" ]; then
+                run uv run deportivas ingest footballdata-games \
+                    --competition-id "$id" --match-history-league "$soccerdata_key" --seasons "$seasons"
+                run uv run deportivas ingest footballdata-odds \
+                    --competition-id "$id" --match-history-league "$soccerdata_key" --seasons "$seasons"
+            elif [ -n "$espn_league" ]; then
+                # Sin football-data.co.uk (UEFA, Liga BetPlay): ESPN es el
+                # respaldo de calendario -- ver README, "unica fuente para
+                # Liga BetPlay Dimayor".
+                run uv run deportivas ingest espn-schedule \
+                    --competition-id "$id" --espn-league "$soccerdata_key" --seasons "$seasons"
+            fi
         fi
         run uv run deportivas features compute-football --competition-id "$id"
         run uv run deportivas models train-football --competition-id "$id"

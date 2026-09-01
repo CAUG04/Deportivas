@@ -32,20 +32,25 @@ env:
   # con headless=false soccerdata SI intenta resolver el CAPTCHA de verdad
   # (ya no es el no-op de "Cannot use GUI captcha solver in headless
   # mode"), pero perdio los 5 intentos en las 11 competiciones igual, ~25%
-  # mas lento por el overhead de Xvfb. Se revierte a headless=true (el
-  # default de Settings.fbref_headless): mismo resultado, mas simple, mas
-  # rapido.
+  # mas lento por el overhead de Xvfb. Confirmado, repetible y sin ninguna
+  # ganancia: en vez de solo revertir a headless=true y seguir gastando
+  # minutos de CI en 11 intentos condenados cada corrida, se desactiva
+  # FBref del todo aqui (Settings.fbref_enabled sigue en true por defecto
+  # para "deportivas fbref-schedule"/"fbref-stats" invocados a mano, ver
+  # .env.example).
+  DEPORTIVAS_FBREF_ENABLED: "false"
 
 jobs:
   sources-health:
     name: Validar fuentes en vivo
     runs-on: ubuntu-latest
-    # 90, no 30: la primera corrida real mostro que un solo FBref bloqueado
-    # por CAPTCHA puede tardar minutos en agotar sus reintentos (ver
-    # ingest/sources_health.py -- "on_issue"), y hay hasta 11 competiciones
-    # de futbol intentando FBref. Mejor una corrida completa y lenta que
-    # una cancelada a mitad de camino sin haber llegado a todas.
-    timeout-minutes: 90
+    # 20, no 90: los 90 minutos originales eran para absorber los reintentos
+    # de CAPTCHA de FBref (hasta 5 por competicion, ver ingest/
+    # sources_health.py -- "on_issue"). Con DEPORTIVAS_FBREF_ENABLED=false
+    # arriba, esta corrida ya no toca FBref en absoluto -- solo Understat/
+    # football-data.co.uk/ESPN (llamadas HTTP simples, sin reintentos
+    # largos) mas /v4/sports de The Odds API.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 

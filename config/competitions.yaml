@@ -143,8 +143,17 @@ competitions:
       the_odds_api: soccer_portugal_primeira_liga
 
   # --- Competiciones UEFA --------------------------------------------------
-  # Sin cuotas historicas en football-data.co.uk y con muestra por equipo baja:
-  # es esperable que muchas senales caigan en tier bajo o descartadas.
+  # Deshabilitadas (enabled: false): confirmado en produccion que ninguna
+  # fuente de calendario funciona para ellas hoy -- FBref esta bloqueado por
+  # CAPTCHA para toda competicion (ver README, "FBref bloquea con
+  # CAPTCHA...") y soccerdata.ESPN.read_schedule() tiene un TypeError propio
+  # con el calendario por etapas de UEFA (bug de la libreria, ver README,
+  # "Limitaciones conocidas"). Sin calendario no hay nada que ingerir,
+  # entrenar ni liquidar -- se quedan declaradas (no se borran, para no
+  # perder el mapeo de identificadores ya investigado) pero fuera de
+  # run_daily_pipeline.sh/run_odds_pipeline.sh/sources-health.yml hasta que
+  # una de las dos fuentes quede resuelta. Volver a habilitar es cambiar
+  # este flag a true, no reescribir codigo.
   - id: uefa-champions-league
     name: UEFA Champions League
     country: Europe
@@ -152,6 +161,7 @@ competitions:
     tier: 1
     season_start_month: 9
     season_end_month: 5
+    enabled: false
     sources:
       soccerdata_key: "INT-Champions League"
       fbref: "Champions League"
@@ -169,6 +179,7 @@ competitions:
     tier: 2
     season_start_month: 9
     season_end_month: 5
+    enabled: false
     sources:
       soccerdata_key: "INT-Europa League"
       fbref: "Europa League"
@@ -186,6 +197,7 @@ competitions:
     tier: 3
     season_start_month: 9
     season_end_month: 5
+    enabled: false
     sources:
       soccerdata_key: "INT-Conference League"
       fbref: "Conference League"
@@ -197,8 +209,13 @@ competitions:
       the_odds_api: soccer_uefa_europa_conference_league
 
   # --- Futbol colombiano ---------------------------------------------------
-  # No existe fuente abierta de cuotas historicas colombianas. El backtest de
-  # esta liga arranca con las cuotas que capturemos desde hoy en adelante.
+  # No existe fuente abierta de cuotas historicas colombianas, y ademas
+  # confirmado en produccion (sources-health.yml) que "soccer_colombia_
+  # primera_a" no existe en /v4/sports de The Odds API -- no es que esta
+  # liga no tenga cuotas historicas (eso ya se sabia), es que The Odds API
+  # no la cubre en absoluto bajo esa clave. the_odds_api: null desactiva
+  # solo la captura de cuotas para esta competicion (calendario/resultados
+  # via ESPN siguen intactos) hasta encontrar la clave correcta, si existe.
   - id: col-primera-a
     name: Liga BetPlay Dimayor
     country: Colombia
@@ -214,7 +231,7 @@ competitions:
       match_history: null
       espn: "col.1"
     odds:
-      the_odds_api: soccer_colombia_primera_a
+      the_odds_api: null
 
   # --- Deportes americanos -------------------------------------------------
   - id: usa-nfl

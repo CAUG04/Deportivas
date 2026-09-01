@@ -34,7 +34,11 @@ class CompetitionSources(BaseModel):
 
 
 class CompetitionOdds(BaseModel):
-    the_odds_api: str
+    # None cuando The Odds API no cubre esta competicion bajo ninguna clave
+    # conocida (confirmado contra /v4/sports por sources-health.yml, no
+    # adivinado) -- desactiva solo la captura de cuotas, nunca calendario ni
+    # resultados de esa competicion.
+    the_odds_api: str | None = None
 
 
 class Competition(BaseModel):

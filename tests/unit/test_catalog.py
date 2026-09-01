@@ -37,6 +37,30 @@ def test_real_competitions_yaml_loads() -> None:
     assert "usa-nfl" in ids
 
 
+def test_uefa_competitions_are_disabled() -> None:
+    """Confirmado en produccion (sources-health.yml): ni FBref (CAPTCHA) ni
+    ESPN (TypeError de soccerdata con calendarios por etapas) tienen fuente
+    de calendario funcional para UEFA hoy -- se quedan declaradas (no se
+    borran) pero fuera del pipeline hasta que una de las dos se resuelva."""
+    load_competitions.cache_clear()
+    catalog = load_competitions()
+    uefa_ids = {"uefa-champions-league", "uefa-europa-league", "uefa-conference-league"}
+    assert {c.id for c in catalog.competitions if c.id in uefa_ids} == uefa_ids
+    assert not any(c.enabled for c in catalog.competitions if c.id in uefa_ids)
+    assert uefa_ids.isdisjoint({c.id for c in catalog.enabled})
+
+
+def test_colombia_has_no_odds_capture() -> None:
+    """Confirmado en produccion: 'soccer_colombia_primera_a' no existe en
+    /v4/sports de The Odds API. Calendario/resultados (ESPN) siguen
+    intactos -- col-primera-a sigue habilitada."""
+    load_competitions.cache_clear()
+    catalog = load_competitions()
+    colombia = catalog.get("col-primera-a")
+    assert colombia.enabled is True
+    assert colombia.odds.the_odds_api is None
+
+
 def test_real_markets_yaml_loads() -> None:
     load_markets.cache_clear()
     catalog = load_markets()
@@ -74,10 +98,12 @@ def test_real_thresholds_yaml_loads() -> None:
 
 def test_competitions_yaml_has_no_duplicate_odds_keys() -> None:
     """the_odds_api sport keys deben ser unicos: una colision silenciosa
-    mezclaria las cuotas de dos competiciones distintas."""
+    mezclaria las cuotas de dos competiciones distintas. None (sin captura
+    de cuotas) no cuenta -- varias competiciones pueden compartirlo sin que
+    sea una colision real."""
     load_competitions.cache_clear()
     catalog = load_competitions()
-    keys = [c.odds.the_odds_api for c in catalog.competitions]
+    keys = [c.odds.the_odds_api for c in catalog.competitions if c.odds.the_odds_api is not None]
     assert len(keys) == len(set(keys))
 
 

@@ -124,6 +124,27 @@ def test_fbref_receives_the_soccerdata_key_not_the_fbref_alias(
     assert calls["fetch"]["fbref_league"] == "ENG-Premier League"  # type: ignore[index]
 
 
+def test_fbref_skipped_entirely_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    # DEPORTIVAS_FBREF_ENABLED=false en daily.yml/sources-health.yml (ver
+    # settings.py): FBref nunca pasa desde un runner de GitHub Actions, asi
+    # que ni se construye el intento -- no solo se ignora un fallo esperado.
+    class _ExplodingFBrefSource:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def fetch_schedule(self, **kwargs: object) -> pd.DataFrame:
+            raise AssertionError("no deberia llamarse con fbref_enabled=false")
+
+    monkeypatch.setattr("deportivas.ingest.sources.fbref.FBrefSource", _ExplodingFBrefSource)
+    monkeypatch.setenv("DEPORTIVAS_FBREF_ENABLED", "false")
+    get_settings.cache_clear()
+
+    competition = _competition(
+        sources=CompetitionSources(fbref="Premier League", soccerdata_key="ENG-Premier League")
+    )
+    assert check_football_sources([competition]) == []
+
+
 def test_fbref_failure_is_reported_by_competition_and_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -368,6 +389,21 @@ def test_unknown_sport_key_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
             "'soccer_colombia_primera_a' no existe en /v4/sports",
         )
     ]
+
+
+def test_competition_without_odds_key_is_skipped_silently(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the_odds_api=None (ver competitions.yaml, col-primera-a): The Odds API
+    # confirmado que no cubre esta competicion bajo ninguna clave -- ya
+    # decidido y documentado, no un hallazgo que reportar cada corrida.
+    monkeypatch.setenv("DEPORTIVAS_THE_ODDS_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"key": "soccer_epl"}])
+
+    competition = _competition(id="col-primera-a", odds=CompetitionOdds(the_odds_api=None))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert check_odds_api_sport_keys([competition], client=client) == []
 
 
 def test_odds_on_issue_is_called_for_each_unknown_key(monkeypatch: pytest.MonkeyPatch) -> None:

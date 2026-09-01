@@ -32,23 +32,28 @@ permissions:
 
 env:
   GH_TOKEN: ${{ github.token }}
-  # FBref bloquea con CAPTCHA a los runners de GitHub Actions incluso con
-  # DEPORTIVAS_FBREF_HEADLESS=false + Xvfb + "xvfb-run" (confirmado en
-  # produccion, ver README "FBref bloquea con CAPTCHA..."): con
-  # headless=false el solver de soccerdata si intenta resolver el CAPTCHA
-  # de verdad, pero FBref gana igual, mas lento por el overhead de Xvfb. Se
-  # deja headless=true (el default de Settings.fbref_headless).
+  # FBref bloquea con CAPTCHA a los runners de GitHub Actions -- confirmado
+  # en produccion incluso con DEPORTIVAS_FBREF_HEADLESS=false + Xvfb +
+  # "xvfb-run" (ver README "FBref bloquea con CAPTCHA..."): el solver de
+  # soccerdata si intenta resolver el CAPTCHA de verdad con esa combinacion,
+  # pero FBref gana igual. Con el resultado ya confirmado y repetible,
+  # intentarlo en cada corrida es tiempo de CI perdido: se desactiva del
+  # todo (Settings.fbref_enabled sigue en true por defecto para uso manual
+  # local, ver .env.example).
+  DEPORTIVAS_FBREF_ENABLED: "false"
 
 jobs:
   daily-pipeline:
     name: Ingesta incremental + modelos + liquidacion
     runs-on: ubuntu-latest
-    # 180, no 90: sources-health.yml (solo validacion, una llamada por
-    # fuente) ya se comio los 30 min que tenia con FBref bloqueado por
-    # CAPTCHA. Este workflow hace fetch real (2 llamadas a FBref por
-    # competicion: schedule + stats) mas features/modelos/liquidacion de
-    # los 5 deportes -- estimacion de partida, se ajusta con datos reales.
-    timeout-minutes: 180
+    # 60, no 180: los 180 minutos eran para absorber 2 llamadas a FBref por
+    # competicion (schedule + stats) con reintentos de CAPTCHA de por medio.
+    # Con DEPORTIVAS_FBREF_ENABLED=false arriba, esta corrida ya no toca
+    # FBref -- solo Understat/football-data.co.uk/ESPN (HTTP simple) mas
+    # features/modelos/liquidacion de los 5 deportes. Se deja margen sobre
+    # la estimacion de partida porque no hay todavia una corrida real medida
+    # sin FBref.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 

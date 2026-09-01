@@ -55,10 +55,18 @@ class Settings(BaseSettings):
     # FBref bloquea con un CAPTCHA a los runners de GitHub Actions; el
     # solver de soccerdata (basado en PyAutoGUI) es un no-op en modo
     # headless -- solo funciona con headless=False, y eso a su vez requiere
-    # una pantalla virtual (Xvfb) detras. Los workflows que la traen ponen
-    # esto en false; en local queda en true (no abrir una ventana de Chrome
-    # sin que el usuario lo pida).
+    # una pantalla virtual (Xvfb) detras. Probado en produccion (ver README,
+    # "FBref bloquea con CAPTCHA..."): incluso con headless=False + Xvfb, el
+    # solver intenta de verdad y pierde igual. En local queda en true (no
+    # abrir una ventana de Chrome sin que el usuario lo pida).
     fbref_headless: bool = True
+    # daily.yml y sources-health.yml ponen esto en false: FBref nunca pasa
+    # desde un runner de GitHub Actions (ver fbref_headless arriba), asi que
+    # intentarlo ahi es tiempo de CI perdido en un resultado ya conocido.
+    # Sigue en true por defecto para que "deportivas fbref-schedule"/
+    # "fbref-stats" (invocados a mano, no por el pipeline automatizado)
+    # funcionen igual desde una IP normal, donde FBref si suele dejar pasar.
+    fbref_enabled: bool = True
 
     # --- Operacion --------------------------------------------------------
     log_level: str = "INFO"

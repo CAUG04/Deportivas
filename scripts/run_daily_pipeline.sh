@@ -70,7 +70,13 @@ while IFS= read -r competition; do
         if [ -z "$soccerdata_key" ]; then
             echo "  aviso: ${id} sin sources.soccerdata_key en competitions.yaml -- se salta futbol"
         else
-            if [ -n "$fbref_league" ]; then
+            # DEPORTIVAS_FBREF_ENABLED=false en daily.yml: FBref nunca pasa
+            # desde un runner de GitHub Actions (CAPTCHA, ver README "FBref
+            # bloquea con CAPTCHA..."), asi que intentarlo ahi es tiempo de
+            # CI gastado en un resultado ya conocido. Sigue en true por
+            # defecto para que este mismo script, corrido a mano desde una
+            # IP normal, si intente FBref.
+            if [ -n "$fbref_league" ] && [ "${DEPORTIVAS_FBREF_ENABLED:-true}" = "true" ]; then
                 run uv run deportivas ingest fbref-schedule \
                     --competition-id "$id" --fbref-league "$soccerdata_key" --seasons "$seasons"
                 run uv run deportivas ingest fbref-stats \

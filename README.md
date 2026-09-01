@@ -227,12 +227,16 @@ deja de cuadrar — nunca solo "algo salió mal".
 - **Fútbol europeo:** Premier League, La Liga, Serie A, Bundesliga,
   Ligue 1, Eredivisie, Primeira Liga
 - **Competiciones UEFA:** Champions League, Europa League, Conference League
+  — **deshabilitadas** (`enabled: false`), ver
+  [Limitaciones conocidas](#limitaciones-conocidas-de-la-fase-1)
 - **Fútbol colombiano:** Liga BetPlay Dimayor (Primera A)
 - **Deportes americanos:** NFL, NBA, MLB, NHL
 
 Las 15 competiciones están declaradas en
-[`config/competitions.yaml`](config/competitions.yaml). Añadir una liga
-nueva es añadir un bloque en ese YAML, no escribir código.
+[`config/competitions.yaml`](config/competitions.yaml); 12 habilitadas hoy
+(las 3 UEFA no lo están — ver arriba). Añadir una liga nueva es añadir un
+bloque en ese YAML, no escribir código; volver a habilitar una ya declarada
+es cambiar un flag, no reescribir nada.
 
 ## Sobre las fuentes de datos: qué existe y qué no
 
@@ -241,23 +245,23 @@ nueva es añadir un bloque en ese YAML, no escribir código.
   verificados contra `soccerdata.LEAGUE_DICT` y los mapeos de columnas
   verificados leyendo el código fuente instalado de `soccerdata` (no
   adivinados) — ver los docstrings de módulo en `src/deportivas/ingest/sources/`.
-- **Eredivisie, Primeira Liga, UEFA, Liga BetPlay:** los identificadores de
-  fuente en `competitions.yaml` están declarados pero **no verificados
-  contra las fuentes en vivo** todavía (esta sesión de desarrollo no tiene
-  acceso de red a FBref, ESPN ni The Odds API). El workflow
-  `sources-health.yml` (Fase 10) los valida en cada ejecución y falla
-  nombrando exactamente qué fuente y qué campo no coincide.
+- **Eredivisie, Primeira Liga, Liga BetPlay:** los identificadores de fuente
+  en `competitions.yaml` quedaron verificados contra la fuente en vivo por
+  `sources-health.yml` (Fase 10) — siguen habilitadas y corriendo en el
+  pipeline diario.
+- **Las tres competiciones UEFA: deshabilitadas** (`enabled: false`).
+  Confirmado en producción que ninguna fuente de calendario funciona para
+  ellas hoy — ver el bullet de FBref/UEFA en
+  [Limitaciones conocidas](#limitaciones-conocidas-de-la-fase-1). Sin
+  calendario no hay nada que ingerir, entrenar ni liquidar; se quedan
+  declaradas para no perder el mapeo de identificadores ya investigado.
 - **Cuotas históricas de la Liga BetPlay Dimayor: no existen en ninguna
-  fuente abierta.** No se inventa una fuente. `odds.yml` (Fase 9) ya captura
-  esta competición como cualquier otra; el backtest de esta liga arrancará
-  únicamente con las cuotas que capture desde el día en que esa corrida
-  empiece a llegar de verdad (requiere `THE_ODDS_API_KEY` configurada como
-  Secret del repositorio — ver [Fase 9](#arquitectura-de-despliegue-gratuito)).
-  `sources-health.yml` ya corrió en producción y reportó que
-  `soccer_colombia_primera_a` (el `odds.the_odds_api` declarado en
-  `competitions.yaml`) no aparece en `/v4/sports` — pendiente de confirmar
-  si The Odds API simplemente no cubre esta liga o si la clave real es
-  otra; hasta resolverlo, esta competición no va a tener cuotas en vivo.
+  fuente abierta**, y además `sources-health.yml` confirmó en producción
+  que The Odds API tampoco cubre esta liga en absoluto — `soccer_colombia_
+  primera_a` (la clave declarada originalmente) no aparece en `/v4/sports`.
+  `odds.the_odds_api: null` en `competitions.yaml` desactiva la captura de
+  cuotas para esta competición; calendario/resultados vía ESPN siguen
+  intactos.
 - **Cuotas en vivo y de cierre (resto de competiciones):** The Odds API
   (plan gratuito, incluye Pinnacle). Requiere
   `DEPORTIVAS_THE_ODDS_API_KEY` — ver `.env.example`.
@@ -280,14 +284,20 @@ visible a una silenciosa:
   `src/deportivas/ingest/sources/pybaseball_source.py`. Exactamente el tipo
   de riesgo que `sources-health.yml` (Fase 10) está pensado para atrapar.
 - **FBref bloquea con CAPTCHA a los runners de GitHub Actions.** Confirmado
-  en producción (`sources-health.yml`): las 11 competiciones de fútbol
-  fallan de forma consistente al intentar FBref desde el runner —
-  `ConnectionError` tras agotar los reintentos de `soccerdata`. Se probó
-  evadirlo con `headless=False` + Xvfb (ver
-  [Fase 9](#fbref-bloquea-con-captcha-a-los-runners-de-github-actions)) y
-  se confirmó, también en producción, que no lo resuelve — revertido a
-  `headless=True`. football-data.co.uk y ESPN (ligas domésticas) cubren
-  calendario/resultados igual mientras tanto.
+  en producción (`sources-health.yml`), tres corridas seguidas: las 11
+  competiciones de fútbol fallan de forma consistente al intentar FBref
+  desde el runner — `ConnectionError` tras agotar los reintentos de
+  `soccerdata`. Se probó evadirlo con `headless=False` + Xvfb (ver
+  [Fase 9](#fbref-bloquea-con-captcha-a-los-runners-de-github-actions)) y se
+  confirmó, también en producción, que no lo resuelve. Con el bloqueo ya
+  confirmado y repetible, `daily.yml`/`sources-health.yml` desactivan FBref
+  del todo (`DEPORTIVAS_FBREF_ENABLED=false`) en vez de seguir gastando
+  minutos de CI en un resultado ya conocido — football-data.co.uk y ESPN
+  (ligas domésticas) cubren calendario/resultados igual. El código
+  (`Settings.fbref_enabled`/`fbref_headless`, `FBrefSource(headless=...)`)
+  se queda en el repositorio para uso manual: `deportivas fbref-schedule`/
+  `fbref-stats`, corridos a mano desde una IP normal (no de datacenter),
+  suelen pasar sin problema.
 - **`soccerdata.ESPN.read_schedule()` no soporta calendarios por etapas
   (UEFA).** Bug de la librería, no de este proyecto: para las tres
   competiciones UEFA (fase de grupos + eliminatorias), la API de ESPN
@@ -295,9 +305,13 @@ visible a una silenciosa:
   fechas planas, y `soccerdata` intenta `datetime.strptime()` sobre esos
   objetos directamente — `TypeError: strptime() argument 1 must be str,
   not dict`, confirmado también en producción. Con FBref bloqueado por
-  CAPTCHA arriba, esto deja a las tres competiciones UEFA sin fuente de
-  calendario funcional por ahora — documentado, no oculto ni parcheado
-  por dentro de una librería de terceros.
+  CAPTCHA arriba, esto deja a las tres competiciones UEFA sin ninguna
+  fuente de calendario funcional — por eso están `enabled: false` en
+  `competitions.yaml` en vez de fallando en rojo cada corrida por un
+  problema que ninguna de las dos fuentes va a resolver por sí sola.
+  Documentado, no oculto ni parcheado por dentro de una librería de
+  terceros; volver a habilitarlas es un flag, en cuanto una de las dos
+  fuentes quede resuelta.
 - **ESPN no publica marcador final en `read_schedule()`.** Toda fixture de
   este adaptador queda `status="scheduled"`, incluso partidos ya jugados.
   Es la única fuente para Liga BetPlay, así que sus resultados históricos
@@ -857,10 +871,14 @@ El plan gratuito son 500 créditos/mes, y cada llamada a
 `/v4/sports/{sport}/odds` cuesta `mercados × regiones` créditos — el número
 de partidos que devuelve no importa. `scripts/run_odds_pipeline.sh` fija
 `--regions eu` (Pinnacle, la referencia de este proyecto, vive ahí) en vez
-del default de tres regiones del CLI: una corrida completa de las 15
-competiciones cuesta ~44 créditos con una región, ~132 con tres. A ~44
-créditos/corrida, `odds.yml` corriendo lunes y jueves (~9 corridas/mes) usa
-~396 créditos/mes — deja margen para reintentos manuales
+del default de tres regiones del CLI: una corrida completa de las
+competiciones con captura de cuotas activa (12 habilitadas menos Colombia,
+que no tiene `odds.the_odds_api` — ver
+["Sobre las fuentes de datos"](#sobre-las-fuentes-de-datos-qué-existe-y-qué-no);
+las 3 UEFA ni siquiera se intentan, están deshabilitadas del todo) cuesta
+~32 créditos con una región, ~96 con tres. A ~32 créditos/corrida,
+`odds.yml` corriendo lunes y jueves (~9 corridas/mes) usa ~288
+créditos/mes — deja bastante margen para reintentos manuales
 (`workflow_dispatch`) sin tocar el tope. Mover la cadencia o las regiones es
 la misma palanca que ya existe para el tiempo de `daily.yml`
 (`config/competitions.yaml`'s `refresh: daily | weekly`): un número en un
@@ -880,20 +898,31 @@ Xvfb + `xvfb-run -a` envolviendo la corrida real, en `daily.yml` y
 nivel de infraestructura — el solver ya no hacía el no-op, intentaba
 resolver el CAPTCHA de verdad — pero perdió los 5 reintentos en las 11
 competiciones de fútbol igual, y quedó ~25-30s más lento por competición
-por el overhead de Xvfb, sin ninguna ganancia a cambio. Revertido: los dos
-workflows corren de nuevo con `headless=True` (el default de
-`Settings.fbref_headless`), sin Xvfb. El código (`FBrefSource(headless=...)`,
-`Settings.fbref_headless`) se deja en el repositorio a propósito, como
-constancia probada y con tests de que este camino no funciona — evita que
-alguien lo reintente sin saber que ya se descartó con evidencia real.
+por el overhead de Xvfb, sin ninguna ganancia a cambio.
 
-Como sigue fallando de todas formas, no tumba el resto del pipeline:
-football-data.co.uk y ESPN ya cubren calendario/resultados de forma
-redundante para la mayoría de competiciones (ver
-["Sobre las fuentes de datos"](#sobre-las-fuentes-de-datos-qué-existe-y-qué-no)),
-y `run_daily_pipeline.sh`/`sources_health.py` aíslan cada fuente por
-competición — un FBref bloqueado es una fila de `FALLO` más, no una
-corrida entera perdida.
+Con el bloqueo confirmado y repetible (tres corridas reales seguidas, misma
+lista exacta de 11 fallos cada vez), seguir intentando FBref en cada
+corrida automatizada es tiempo de CI gastado en un resultado ya conocido —
+no solo revertir a `headless=True`, sino desactivar FBref del todo ahí:
+`daily.yml`/`sources-health.yml` ponen `DEPORTIVAS_FBREF_ENABLED=false`
+(ver `Settings.fbref_enabled` en `config/settings.py`). El código que se
+probó (`FBrefSource(headless=...)`, `Settings.fbref_headless`) se queda en
+el repositorio a propósito, como constancia probada y con tests de que ese
+camino no funciona, y sigue disponible para uso manual: `deportivas
+fbref-schedule`/`fbref-stats`, corridos a mano desde una máquina con IP
+normal (no de datacenter), suelen pasar sin que FBref los bloquee — solo el
+runner de GitHub Actions está identificado y bloqueado.
+
+Como FBref sigue sin funcionar desde el runner, football-data.co.uk y ESPN
+cubren calendario/resultados de forma redundante para 8 de las 11
+competiciones de fútbol (ver
+["Sobre las fuentes de datos"](#sobre-las-fuentes-de-datos-qué-existe-y-qué-no)).
+Las tres competiciones UEFA, que dependían de FBref *o* de ESPN (bloqueado
+por un bug propio de `soccerdata` con calendarios por etapas — ver
+[Limitaciones conocidas](#limitaciones-conocidas-de-la-fase-1)), se quedan
+sin ninguna fuente funcional y por eso están `enabled: false` en
+`competitions.yaml` en vez de generando un `FALLO` sin remedio en cada
+corrida.
 
 ### Notificación de fallos
 

@@ -151,7 +151,7 @@ def check_football_sources(
         # match_history) por su cuenta a partir de esa clave. Pasarle el
         # alias en vez de la clave es exactamente el bug que este chequeo
         # encontro en produccion la primera vez que corrio de verdad.
-        if sources.fbref is not None:
+        if sources.fbref is not None and settings.fbref_enabled:
             issues += _try(
                 competition.id,
                 "sources.fbref",
@@ -246,7 +246,11 @@ def check_odds_api_sport_keys(
                 f"'{competition.odds.the_odds_api}' no existe en /v4/sports",
             )
             for competition in competitions
-            if competition.odds.the_odds_api not in known_keys
+            # None es "sin captura de cuotas para esta competicion", ya
+            # decidido y documentado (ver competitions.yaml) -- no un
+            # hallazgo que reportar cada corrida.
+            if competition.odds.the_odds_api is not None
+            and competition.odds.the_odds_api not in known_keys
         ]
 
     if on_issue is not None:

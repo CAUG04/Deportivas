@@ -53,9 +53,17 @@ echo "###### captura de cuotas (The Odds API) ######"
 while IFS= read -r competition; do
     id="$(jq -r '.id' <<<"$competition")"
     sport="$(jq -r '.sport' <<<"$competition")"
-    sport_key="$(jq -r '.odds.the_odds_api' <<<"$competition")"
+    sport_key="$(jq -r '.odds.the_odds_api // empty' <<<"$competition")"
     market_map="$(market_map_for "$sport")"
 
+    if [ -z "$sport_key" ]; then
+        # the_odds_api: null en competitions.yaml -- The Odds API confirmado
+        # que no cubre esta competicion bajo ninguna clave (ver README,
+        # bloque de Colombia). Calendario/resultados siguen intactos, solo
+        # se salta la captura de cuotas.
+        echo "  aviso: ${id} sin odds.the_odds_api en competitions.yaml -- se salta captura de cuotas"
+        continue
+    fi
     if [ -z "$market_map" ]; then
         echo "  aviso: sin market_map para el deporte '${sport}' -- se salta ${id}"
         continue

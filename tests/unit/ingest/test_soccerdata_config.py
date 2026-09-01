@@ -31,9 +31,17 @@ def test_writes_an_entry_per_football_competition_with_a_soccerdata_key(tmp_path
     assert entries["NED-Eredivisie"]["ESPN"] == "ned.1"
     assert "Understat" not in entries["NED-Eredivisie"]  # null en competitions.yaml
 
-    assert entries["INT-Champions League"]["season_start"] == "Sep"
-    assert entries["INT-Champions League"]["season_end"] == "May"
-    assert "MatchHistory" not in entries["INT-Champions League"]
+
+def test_disabled_uefa_competitions_get_no_entry(tmp_path: Path) -> None:
+    # Las tres UEFA estan enabled: false en competitions.yaml (ni FBref ni
+    # ESPN tienen calendario funcional para ellas hoy, ver README) -- sin
+    # una llamada de red que hacer, no hace falta que soccerdata pueda
+    # resolverlas en absoluto.
+    path = ensure_custom_league_dict(config_dir=tmp_path)
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    assert "INT-Champions League" not in entries
+    assert "INT-Europa League" not in entries
+    assert "INT-Conference League" not in entries
 
 
 def test_colombia_is_a_calendar_year_league(tmp_path: Path) -> None:
@@ -41,6 +49,7 @@ def test_colombia_is_a_calendar_year_league(tmp_path: Path) -> None:
     entries = json.loads(path.read_text(encoding="utf-8"))
     assert entries["COL-Primera A"]["season_start"] == "Jan"
     assert entries["COL-Primera A"]["season_end"] == "Dec"
+    assert "MatchHistory" not in entries["COL-Primera A"]  # null en competitions.yaml
 
 
 def test_american_sports_have_no_soccerdata_key(tmp_path: Path) -> None:

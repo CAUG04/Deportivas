@@ -935,7 +935,9 @@ def test_current_seasons_command_defaults_to_two() -> None:
 
 
 def test_sources_health_command_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("deportivas.ingest.sources_health.run_health_check", lambda: [])
+    monkeypatch.setattr(
+        "deportivas.ingest.sources_health.run_health_check", lambda *, on_issue=None: []
+    )
 
     result = runner.invoke(app, ["sources-health"])
 
@@ -946,12 +948,19 @@ def test_sources_health_command_ok(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_sources_health_command_reports_issues_and_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from collections.abc import Callable
+
     from deportivas.ingest.sources_health import HealthIssue
 
-    monkeypatch.setattr(
-        "deportivas.ingest.sources_health.run_health_check",
-        lambda: [HealthIssue("ned-eredivisie", "sources.fbref", "ValueError: liga invalida")],
-    )
+    def _fake_run_health_check(
+        *, on_issue: Callable[[HealthIssue], None] | None = None
+    ) -> list[HealthIssue]:
+        issue = HealthIssue("ned-eredivisie", "sources.fbref", "ValueError: liga invalida")
+        if on_issue is not None:
+            on_issue(issue)
+        return [issue]
+
+    monkeypatch.setattr("deportivas.ingest.sources_health.run_health_check", _fake_run_health_check)
 
     result = runner.invoke(app, ["sources-health"])
 

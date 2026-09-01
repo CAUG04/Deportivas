@@ -32,7 +32,12 @@ jobs:
   sources-health:
     name: Validar fuentes en vivo
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 90, no 30: la primera corrida real mostro que un solo FBref bloqueado
+    # por CAPTCHA puede tardar minutos en agotar sus reintentos (ver
+    # ingest/sources_health.py -- "on_issue"), y hay hasta 11 competiciones
+    # de futbol intentando FBref. Mejor una corrida completa y lenta que
+    # una cancelada a mitad de camino sin haber llegado a todas.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

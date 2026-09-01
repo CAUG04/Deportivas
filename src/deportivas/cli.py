@@ -658,15 +658,18 @@ def sources_health_command() -> None:
     las claves de deporte de The Odds API -- y sale con codigo distinto de
     cero nombrando cada competicion y campo que no cuadra, para que
     .github/workflows/sources-health.yml (Fase 10) falle ruidosamente en vez
-    de que la proxima ingesta real lo descubra en silencio."""
+    de que la proxima ingesta real lo descubra en silencio. Imprime cada
+    FALLO en el instante en que se encuentra, no al final: una corrida real
+    puede tardar minutos por competicion (reintentos de la propia fuente) y
+    el runner puede cancelarla antes de terminar el bucle completo -- sin
+    esto, una corrida cortada a mitad de camino no dejaria ningun rastro de
+    lo que si se alcanzo a comprobar."""
     from deportivas.ingest.sources_health import run_health_check
 
-    issues = run_health_check()
+    issues = run_health_check(on_issue=lambda issue: typer.echo(f"FALLO: {issue}"))
     if not issues:
         typer.echo("sources-health: todo OK")
         return
-    for issue in issues:
-        typer.echo(f"FALLO: {issue}")
     raise typer.Exit(code=1)
 
 

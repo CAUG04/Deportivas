@@ -153,6 +153,41 @@ def test_fbref_failure_is_reported_by_competition_and_field(
     )
 
 
+def test_on_issue_is_called_immediately_for_each_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Descubierto necesario en produccion: una corrida real puede tardar
+    # minutos por competicion y el runner puede cancelarla a mitad de
+    # camino -- on_issue es lo que deja rastro de lo que si se alcanzo a
+    # comprobar, en vez de acumular todo en silencio hasta el final.
+    class _FailingFBrefSource:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def fetch_schedule(self, **kwargs: object) -> pd.DataFrame:
+            raise ValueError("boom")
+
+    monkeypatch.setattr("deportivas.ingest.sources.fbref.FBrefSource", _FailingFBrefSource)
+
+    seen: list[HealthIssue] = []
+    competition = _competition(
+        sources=CompetitionSources(fbref="Premier League", soccerdata_key="ENG-Premier League")
+    )
+    issues = check_football_sources([competition], on_issue=seen.append)
+
+    assert seen == issues
+
+
+def test_on_issue_is_called_for_a_missing_soccerdata_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[HealthIssue] = []
+    bare = _competition(sources=CompetitionSources())
+    issues = check_football_sources([bare], on_issue=seen.append)
+
+    assert (
+        seen
+        == issues
+        == [HealthIssue("eng-premier-league", "sources.soccerdata_key", "no configurado")]
+    )
+
+
 def test_empty_dataframe_is_not_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     class _OffSeasonFBrefSource:
         def __init__(self, **kwargs: object) -> None:
@@ -335,6 +370,21 @@ def test_unknown_sport_key_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
+def test_odds_on_issue_is_called_for_each_unknown_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEPORTIVAS_THE_ODDS_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    seen: list[HealthIssue] = []
+    competition = _competition(odds=CompetitionOdds(the_odds_api="soccer_epl"))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        issues = check_odds_api_sport_keys([competition], client=client, on_issue=seen.append)
+
+    assert seen == issues
+
+
 def test_non_200_response_is_reported_once(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEPORTIVAS_THE_ODDS_API_KEY", "bad-key")
     get_settings.cache_clear()
@@ -383,11 +433,30 @@ def test_run_health_check_combines_both_checks(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(
         "deportivas.ingest.sources_health.check_football_sources",
-        lambda competitions: [football_issue],
+        lambda competitions, *, on_issue=None: [football_issue],
     )
     monkeypatch.setattr(
         "deportivas.ingest.sources_health.check_odds_api_sport_keys",
-        lambda competitions: [odds_issue],
+        lambda competitions, *, on_issue=None: [odds_issue],
     )
 
     assert run_health_check() == [football_issue, odds_issue]
+
+
+def test_run_health_check_forwards_on_issue_to_both_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+
+    monkeypatch.setattr(
+        "deportivas.ingest.sources_health.check_football_sources",
+        lambda competitions, *, on_issue=None: (on_issue and on_issue("football")) or [],
+    )
+    monkeypatch.setattr(
+        "deportivas.ingest.sources_health.check_odds_api_sport_keys",
+        lambda competitions, *, on_issue=None: (on_issue and on_issue("odds")) or [],
+    )
+
+    run_health_check(on_issue=seen.append)  # type: ignore[arg-type]
+
+    assert seen == ["football", "odds"]

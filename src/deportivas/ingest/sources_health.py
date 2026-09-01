@@ -23,6 +23,15 @@ fallo -- solo una excepcion real (error de red, HTTP, "liga invalida") lo
 es. Tratar "vacio" como fallo produciria falsos positivos constantes en
 temporada baja, que es exactamente el ruido que este chequeo existe para
 evitar.
+
+Cada funcion acepta un ``on_issue`` opcional, llamado en el instante en que
+se encuentra cada hallazgo (ademas de devolverlos todos juntos al final).
+Descubierto necesario en produccion: una corrida real puede tardar minutos
+por competicion (reintentos de la propia fuente, ver docstring de
+``check_football_sources``) y el runner de GitHub Actions puede cancelarla
+antes de que termine el bucle completo -- sin ``on_issue`` el CLI solo
+imprime al final, y una corrida cortada a mitad de camino no deja ningun
+rastro de lo que si se alcanzo a comprobar.
 """
 
 from __future__ import annotations
@@ -57,15 +66,26 @@ class HealthIssue:
         return f"{self.competition_id}.{self.field}: {self.detail}"
 
 
-def _try(competition_id: str, field: str, fetch: Callable[[], pd.DataFrame]) -> list[HealthIssue]:
+def _try(
+    competition_id: str,
+    field: str,
+    fetch: Callable[[], pd.DataFrame],
+    *,
+    on_issue: Callable[[HealthIssue], None] | None = None,
+) -> list[HealthIssue]:
     try:
         fetch()
     except Exception as exc:  # cualquier fallo de la fuente cuenta, no solo los tipos ya vistos
-        return [HealthIssue(competition_id, field, f"{type(exc).__name__}: {exc}")]
+        issue = HealthIssue(competition_id, field, f"{type(exc).__name__}: {exc}")
+        if on_issue is not None:
+            on_issue(issue)
+        return [issue]
     return []
 
 
-def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]:
+def check_football_sources(
+    competitions: list[Competition], *, on_issue: Callable[[HealthIssue], None] | None = None
+) -> list[HealthIssue]:
     football = [c for c in competitions if c.sport is Sport.FOOTBALL]
     if not football:
         return []
@@ -114,7 +134,12 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
         sources = competition.sources
         league_key = sources.soccerdata_key
         if league_key is None:
-            issues.append(HealthIssue(competition.id, "sources.soccerdata_key", "no configurado"))
+            missing_key_issue = HealthIssue(
+                competition.id, "sources.soccerdata_key", "no configurado"
+            )
+            if on_issue is not None:
+                on_issue(missing_key_issue)
+            issues.append(missing_key_issue)
             continue
         season = season_labels(competition, count=1)[0]
 
@@ -135,6 +160,7 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
                     fbref_league=league_key,
                     seasons=[season],
                 ),
+                on_issue=on_issue,
             )
         if sources.understat is not None:
             issues += _try(
@@ -146,6 +172,7 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
                     understat_league=league_key,
                     seasons=[season],
                 ),
+                on_issue=on_issue,
             )
         if sources.match_history is not None:
             issues += _try(
@@ -157,6 +184,7 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
                     match_history_league=league_key,
                     seasons=[season],
                 ),
+                on_issue=on_issue,
             )
         elif sources.espn is not None:
             # Respaldo de calendario solo cuando no hay football-data.co.uk
@@ -170,12 +198,16 @@ def check_football_sources(competitions: list[Competition]) -> list[HealthIssue]
                     espn_league=league_key,
                     seasons=[season],
                 ),
+                on_issue=on_issue,
             )
     return issues
 
 
 def check_odds_api_sport_keys(
-    competitions: list[Competition], *, client: httpx.Client | None = None
+    competitions: list[Competition],
+    *,
+    client: httpx.Client | None = None,
+    on_issue: Callable[[HealthIssue], None] | None = None,
 ) -> list[HealthIssue]:
     """Valida cada ``odds.the_odds_api`` contra ``/v4/sports`` -- este
     endpoint no gasta creditos del plan gratuito (a diferencia de
@@ -201,22 +233,29 @@ def check_odds_api_sport_keys(
         if owns_client:
             http_client.close()
     if response.status_code != httpx.codes.OK:
-        return [
+        issues = [
             HealthIssue("*", "odds.the_odds_api", f"/v4/sports respondio {response.status_code}")
         ]
+    else:
+        known_keys = {sport["key"] for sport in response.json()}
+        issues = [
+            HealthIssue(
+                competition.id,
+                "odds.the_odds_api",
+                f"'{competition.odds.the_odds_api}' no existe en /v4/sports",
+            )
+            for competition in competitions
+            if competition.odds.the_odds_api not in known_keys
+        ]
 
-    known_keys = {sport["key"] for sport in response.json()}
-    return [
-        HealthIssue(
-            competition.id,
-            "odds.the_odds_api",
-            f"'{competition.odds.the_odds_api}' no existe en /v4/sports",
-        )
-        for competition in competitions
-        if competition.odds.the_odds_api not in known_keys
-    ]
+    if on_issue is not None:
+        for issue in issues:
+            on_issue(issue)
+    return issues
 
 
-def run_health_check() -> list[HealthIssue]:
+def run_health_check(*, on_issue: Callable[[HealthIssue], None] | None = None) -> list[HealthIssue]:
     competitions = list(load_competitions().enabled)
-    return check_football_sources(competitions) + check_odds_api_sport_keys(competitions)
+    return check_football_sources(competitions, on_issue=on_issue) + check_odds_api_sport_keys(
+        competitions, on_issue=on_issue
+    )

@@ -32,12 +32,23 @@ permissions:
 
 env:
   GH_TOKEN: ${{ github.token }}
+  # FBref bloquea con CAPTCHA a los runners de GitHub Actions; el solver de
+  # soccerdata es un no-op en modo headless (ver el docstring de
+  # ingest/sources/fbref.py). false aqui + el paso de Xvfb + "xvfb-run" mas
+  # abajo es el intento de evadirlo -- sin garantias, FBref decide del lado
+  # de ellos.
+  DEPORTIVAS_FBREF_HEADLESS: "false"
 
 jobs:
   daily-pipeline:
     name: Ingesta incremental + modelos + liquidacion
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 180, no 90: sources-health.yml (solo validacion, una llamada por
+    # fuente) ya se comio los 30 min que tenia con FBref bloqueado por
+    # CAPTCHA. Este workflow hace fetch real (2 llamadas a FBref por
+    # competicion: schedule + stats) mas features/modelos/liquidacion de
+    # los 5 deportes -- estimacion de partida, se ajusta con datos reales.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -54,11 +65,14 @@ jobs:
       - name: Instalar dependencias (lockfile exacto)
         run: uv sync --all-extras --frozen
 
+      - name: Instalar Xvfb (pantalla virtual para headless=false)
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Restaurar data lake (GitHub Release)
         run: ./scripts/restore_data_lake.sh
 
       - name: Pipeline diario
-        run: ./scripts/run_daily_pipeline.sh
+        run: xvfb-run -a ./scripts/run_daily_pipeline.sh
 
       - name: Publicar data lake (GitHub Release)
         if: always()

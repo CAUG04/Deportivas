@@ -9,6 +9,15 @@ Fase 1). ``soccerdata`` keeps its own on-disk cache of the HTML it downloads
 (pointed at ``data_dir`` below); this adapter archives whatever new files
 land there into the append-only raw layer right after each call — see
 ``ingest/base.py`` for why that two-step exists.
+
+FBref also fronts a CAPTCHA that ``soccerdata``'s Selenium-based reader
+hits on datacenter IPs like GitHub Actions runners (Fase 10 found this in
+production). ``soccerdata``'s own CAPTCHA solver is a no-op in headless
+mode — it only attempts to solve one when ``headless=False``, which needs a
+virtual display (Xvfb) behind it, or Chrome has nowhere to draw. That's
+what ``Settings.fbref_headless`` and the ``headless`` constructor arg here
+are for — see the workflows for the ``xvfb-run`` wrapper that makes
+``headless=False`` viable in CI at all.
 """
 
 from __future__ import annotations
@@ -61,10 +70,16 @@ class FBrefSource(DataSource):
         rate_limiter: RateLimiter,
         data_dir: Path,
         aliases: TeamAliasResolver,
+        headless: bool = True,
     ) -> None:
         super().__init__(raw_repo=raw_repo, rate_limiter=rate_limiter)
         self._data_dir = data_dir
         self._aliases = aliases
+        # Ver Settings.fbref_headless: el solver de CAPTCHA de soccerdata
+        # (PyAutoGUI) es un no-op cuando headless=True. False solo funciona
+        # con una pantalla virtual (Xvfb) detras -- responsabilidad del
+        # llamador, no de este adaptador.
+        self._headless = headless
 
     def fetch_schedule(
         self, *, competition_id: str, fbref_league: str, seasons: list[str]
@@ -72,7 +87,12 @@ class FBrefSource(DataSource):
         """Returns rows shaped for the ``fixtures`` table."""
         self._wait()
         since = datetime.now(UTC)
-        reader = sd.FBref(leagues=[fbref_league], seasons=seasons, data_dir=self._data_dir)
+        reader = sd.FBref(
+            leagues=[fbref_league],
+            seasons=seasons,
+            data_dir=self._data_dir,
+            headless=self._headless,
+        )
         raw = reader.read_schedule().reset_index()
         self._archive_cache_dir(self._data_dir, since=since)
         return self._to_fixtures(raw, competition_id=competition_id)
@@ -89,7 +109,12 @@ class FBrefSource(DataSource):
         """
         self._wait()
         since = datetime.now(UTC)
-        reader = sd.FBref(leagues=[fbref_league], seasons=seasons, data_dir=self._data_dir)
+        reader = sd.FBref(
+            leagues=[fbref_league],
+            seasons=seasons,
+            data_dir=self._data_dir,
+            headless=self._headless,
+        )
         raw = reader.read_team_match_stats(stat_type="schedule").reset_index()
         self._archive_cache_dir(self._data_dir, since=since)
         return self._to_team_match_stats(raw, competition_id=competition_id)

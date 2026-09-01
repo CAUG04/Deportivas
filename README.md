@@ -842,6 +842,26 @@ la misma palanca que ya existe para el tiempo de `daily.yml`
 (`config/competitions.yaml`'s `refresh: daily | weekly`): un número en un
 sitio, no una reescritura.
 
+### FBref bloquea con CAPTCHA a los runners de GitHub Actions
+
+Descubierto en la primera corrida real de `sources-health.yml`: FBref le
+sirve un CAPTCHA al runner (IP de datacenter), y el solver de `soccerdata`
+(basado en PyAutoGUI) es un *no-op* en modo headless — solo lo intenta de
+verdad con `headless=False`, que a su vez necesita una pantalla virtual o
+Chrome no tiene dónde dibujar. `Settings.fbref_headless` (`false` en
+`daily.yml`/`sources-health.yml`, `true` por defecto en local) más un paso
+que instala Xvfb y envuelve la corrida real con `xvfb-run -a` es el intento
+de evadirlo — **sin garantías**: FBref decide del lado de ellos, y un
+solver de CAPTCHA automatizado nunca tiene una tasa de éxito del 100%.
+
+Si sigue fallando de todas formas, no tumba el resto del pipeline:
+football-data.co.uk y ESPN ya cubren calendario/resultados de forma
+redundante para la mayoría de competiciones (ver
+["Sobre las fuentes de datos"](#sobre-las-fuentes-de-datos-qué-existe-y-qué-no)),
+y `run_daily_pipeline.sh`/`sources_health.py` aíslan cada fuente por
+competición — un FBref bloqueado es una fila de `FALLO` más, no una
+corrida entera perdida.
+
 ### Notificación de fallos
 
 Los cuatro workflows —y `ci.yml`— comparten un job reutilizable

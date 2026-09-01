@@ -112,6 +112,7 @@ def check_football_sources(
         rate_limiter=RateLimiter(settings.fbref_min_delay_seconds),
         data_dir=settings.cache_dir / "fbref",
         aliases=aliases,
+        headless=settings.fbref_headless,
     )
     understat = UnderstatSource(
         raw_repo=raw_repo,

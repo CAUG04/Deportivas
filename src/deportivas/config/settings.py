@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     the_odds_api_key: SecretStr | None = None
     http_user_agent: str = "deportivas/0.1 (uso personal)"
     fbref_min_delay_seconds: float = Field(default=4.0, ge=0.0)
+    # FBref bloquea con un CAPTCHA a los runners de GitHub Actions; el
+    # solver de soccerdata (basado en PyAutoGUI) es un no-op en modo
+    # headless -- solo funciona con headless=False, y eso a su vez requiere
+    # una pantalla virtual (Xvfb) detras. Los workflows que la traen ponen
+    # esto en false; en local queda en true (no abrir una ventana de Chrome
+    # sin que el usuario lo pida).
+    fbref_headless: bool = True
 
     # --- Operacion --------------------------------------------------------
     log_level: str = "INFO"

@@ -112,6 +112,7 @@ def fbref_schedule(
         rate_limiter=_fbref_rate_limiter(),
         data_dir=get_settings().cache_dir / "fbref",
         aliases=_alias_resolver("football"),
+        headless=get_settings().fbref_headless,
     )
     df = source.fetch_schedule(
         competition_id=competition_id, fbref_league=fbref_league, seasons=_seasons_list(seasons)
@@ -132,6 +133,7 @@ def fbref_stats(competition_id: CompetitionId, fbref_league: LeagueKey, seasons:
         rate_limiter=_fbref_rate_limiter(),
         data_dir=get_settings().cache_dir / "fbref",
         aliases=_alias_resolver("football"),
+        headless=get_settings().fbref_headless,
     )
     df = source.fetch_team_match_stats(
         competition_id=competition_id, fbref_league=fbref_league, seasons=_seasons_list(seasons)

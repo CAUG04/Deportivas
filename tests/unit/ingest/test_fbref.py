@@ -18,7 +18,7 @@ from deportivas.storage.duckdb_repo.raw_store import ParquetRawDocumentRepositor
 from deportivas.storage.duckdb_repo.repository import ParquetTableRepository
 
 
-def _source(tmp_path: Path) -> FBrefSource:
+def _source(tmp_path: Path, *, headless: bool = True) -> FBrefSource:
     raw_repo = ParquetRawDocumentRepository(tmp_path / "raw", tmp_path / "parquet")
     teams_repo = ParquetTableRepository(TEAMS, tmp_path / "parquet")
     aliases_repo = ParquetTableRepository(TEAM_ALIASES, tmp_path / "parquet")
@@ -28,6 +28,7 @@ def _source(tmp_path: Path) -> FBrefSource:
         rate_limiter=RateLimiter(0.0),
         data_dir=tmp_path / "cache",
         aliases=resolver,
+        headless=headless,
     )
 
 
@@ -249,10 +250,13 @@ class _FakeFBrefReader:
 
     last_instance: _FakeFBrefReader | None = None
 
-    def __init__(self, *, leagues: list[str], seasons: list[str], data_dir: Path) -> None:
+    def __init__(
+        self, *, leagues: list[str], seasons: list[str], data_dir: Path, headless: bool
+    ) -> None:
         self.leagues = leagues
         self.seasons = seasons
         self.data_dir = data_dir
+        self.headless = headless
         type(self).last_instance = self
 
     def read_schedule(self) -> pd.DataFrame:
@@ -309,3 +313,21 @@ def test_fetch_team_match_stats_waits_archives_and_maps(
     assert len(waits) == 1
     assert len(stats) == 1
     assert stats.iloc[0]["competition_id"] == "eng-premier-league"
+
+
+def test_headless_flag_defaults_true_and_threads_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("deportivas.ingest.sources.fbref.sd.FBref", _FakeFBrefReader)
+    monkeypatch.setattr(FBrefSource, "_wait", lambda self: 0.0)
+
+    _source(tmp_path).fetch_schedule(
+        competition_id="eng-premier-league", fbref_league="ENG-Premier League", seasons=["2526"]
+    )
+    assert _FakeFBrefReader.last_instance is not None
+    assert _FakeFBrefReader.last_instance.headless is True
+
+    _source(tmp_path, headless=False).fetch_schedule(
+        competition_id="eng-premier-league", fbref_league="ENG-Premier League", seasons=["2526"]
+    )
+    assert _FakeFBrefReader.last_instance.headless is False

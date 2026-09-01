@@ -27,6 +27,12 @@ permissions:
 
 env:
   DEPORTIVAS_THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+  # FBref bloquea con CAPTCHA a los runners de GitHub Actions; el solver de
+  # soccerdata es un no-op en modo headless (ver el docstring de
+  # ingest/sources/fbref.py). false aqui + el paso de Xvfb + "xvfb-run" mas
+  # abajo es el intento de evadirlo -- sin garantias, FBref decide del lado
+  # de ellos.
+  DEPORTIVAS_FBREF_HEADLESS: "false"
 
 jobs:
   sources-health:
@@ -54,8 +60,11 @@ jobs:
       - name: Instalar dependencias (lockfile exacto)
         run: uv sync --all-extras --frozen
 
+      - name: Instalar Xvfb (pantalla virtual para headless=false)
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Validar fuentes
-        run: uv run deportivas sources-health
+        run: xvfb-run -a uv run deportivas sources-health
 
   notify-on-failure:
     needs: [sources-health]

@@ -253,6 +253,11 @@ nueva es añadir un bloque en ese YAML, no escribir código.
   únicamente con las cuotas que capture desde el día en que esa corrida
   empiece a llegar de verdad (requiere `THE_ODDS_API_KEY` configurada como
   Secret del repositorio — ver [Fase 9](#arquitectura-de-despliegue-gratuito)).
+  `sources-health.yml` ya corrió en producción y reportó que
+  `soccer_colombia_primera_a` (el `odds.the_odds_api` declarado en
+  `competitions.yaml`) no aparece en `/v4/sports` — pendiente de confirmar
+  si The Odds API simplemente no cubre esta liga o si la clave real es
+  otra; hasta resolverlo, esta competición no va a tener cuotas en vivo.
 - **Cuotas en vivo y de cierre (resto de competiciones):** The Odds API
   (plan gratuito, incluye Pinnacle). Requiere
   `DEPORTIVAS_THE_ODDS_API_KEY` — ver `.env.example`.
@@ -274,6 +279,24 @@ visible a una silenciosa:
   confiarle producción — ver el docstring de
   `src/deportivas/ingest/sources/pybaseball_source.py`. Exactamente el tipo
   de riesgo que `sources-health.yml` (Fase 10) está pensado para atrapar.
+- **FBref bloquea con CAPTCHA a los runners de GitHub Actions.** Confirmado
+  en producción (`sources-health.yml`): las 11 competiciones de fútbol
+  fallan de forma consistente al intentar FBref desde el runner —
+  `ConnectionError` tras agotar los reintentos de `soccerdata`. Se intenta
+  evadirlo con `headless=False` + Xvfb (ver
+  [Fase 9](#fbref-bloquea-con-captcha-a-los-runners-de-github-actions)),
+  sin garantías. football-data.co.uk y ESPN (ligas domésticas) cubren
+  calendario/resultados igual mientras tanto.
+- **`soccerdata.ESPN.read_schedule()` no soporta calendarios por etapas
+  (UEFA).** Bug de la librería, no de este proyecto: para las tres
+  competiciones UEFA (fase de grupos + eliminatorias), la API de ESPN
+  devuelve `calendar` como una lista de objetos por etapa en vez de
+  fechas planas, y `soccerdata` intenta `datetime.strptime()` sobre esos
+  objetos directamente — `TypeError: strptime() argument 1 must be str,
+  not dict`, confirmado también en producción. Con FBref bloqueado por
+  CAPTCHA arriba, esto deja a las tres competiciones UEFA sin fuente de
+  calendario funcional por ahora — documentado, no oculto ni parcheado
+  por dentro de una librería de terceros.
 - **ESPN no publica marcador final en `read_schedule()`.** Toda fixture de
   este adaptador queda `status="scheduled"`, incluso partidos ya jugados.
   Es la única fuente para Liga BetPlay, así que sus resultados históricos

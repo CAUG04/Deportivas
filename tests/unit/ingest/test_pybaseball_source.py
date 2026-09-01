@@ -160,14 +160,14 @@ def test_fetch_schedule_iterates_teams_waits_and_archives(
         waits.append(1.0)
         return 0.0
 
-    def fake_schedule_and_record(season: int, team: str) -> pd.DataFrame:
+    def fake_fetch_team_table(season: int, team: str) -> pd.DataFrame:
         calls.append((season, team))
         return pd.DataFrame([_home_game_row(Tm=team)])
 
     monkeypatch.setattr(source, "_wait", fake_wait)
     monkeypatch.setattr(
-        "deportivas.ingest.sources.pybaseball_source.pb.schedule_and_record",
-        fake_schedule_and_record,
+        "deportivas.ingest.sources.pybaseball_source._fetch_team_table",
+        fake_fetch_team_table,
     )
 
     fixtures = source.fetch_schedule(
@@ -183,3 +183,69 @@ def test_fetch_schedule_empty_team_list_returns_empty_dataframe(tmp_path: Path) 
     source = _source(tmp_path)
     fixtures = source.fetch_schedule(competition_id="usa-mlb", season=2025, team_abbreviations=[])
     assert fixtures.empty
+
+
+# -- El bug de make_numeric -----------------------------------------------------
+
+
+def test_unknown_sentinel_in_scores_is_read_as_no_score_not_a_crash(tmp_path: Path) -> None:
+    """Regresion del fallo real de daily.yml: pybaseball rellena las celdas
+    vacias de un partido no jugado con el centinela "Unknown" y su
+    make_numeric revienta al hacer astype(float) sobre el. Este adaptador
+    no pasa por ahi (ver _fetch_team_table); "Unknown" tiene que leerse
+    como "sin marcador todavia"."""
+    source = _source(tmp_path)
+    raw = pd.DataFrame([_home_game_row(R="Unknown", RA="Unknown")])
+
+    fixtures = source._to_fixtures(raw, competition_id="usa-mlb", season=2025)
+
+    assert len(fixtures) == 1
+    assert fixtures.iloc[0]["status"] == "scheduled"
+    assert fixtures.iloc[0]["home_score"] is None
+    assert fixtures.iloc[0]["away_score"] is None
+
+
+def test_scores_arriving_as_strings_are_still_parsed(tmp_path: Path) -> None:
+    """Sin make_numeric las columnas llegan como texto crudo del HTML, no
+    como float: un marcador real tiene que seguir leyendose igual."""
+    source = _source(tmp_path)
+    raw = pd.DataFrame([_home_game_row(R="5", RA="2")])
+
+    fixtures = source._to_fixtures(raw, competition_id="usa-mlb", season=2025)
+
+    assert fixtures.iloc[0]["status"] == "finished"
+    assert fixtures.iloc[0]["home_score"] == 5
+    assert fixtures.iloc[0]["away_score"] == 2
+
+
+def test_fetch_team_table_uses_soup_and_table_but_never_make_numeric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """make_numeric es exactamente el paso roto: no debe llamarse nunca."""
+    from deportivas.ingest.sources import pybaseball_source
+
+    expected = pd.DataFrame([_home_game_row()])
+
+    def fake_get_soup(season: int, team: str) -> str:
+        return f"soup:{season}:{team}"
+
+    def fake_get_table(soup: object, team: str) -> pd.DataFrame:
+        assert soup == "soup:2025:PHI"
+        return expected
+
+    def exploding_make_numeric(data: pd.DataFrame) -> pd.DataFrame:
+        raise AssertionError("make_numeric es el paso roto, no debe llamarse")
+
+    monkeypatch.setattr(pybaseball_source._pb, "get_soup", fake_get_soup)
+    monkeypatch.setattr(pybaseball_source._pb, "get_table", fake_get_table)
+    monkeypatch.setattr(pybaseball_source._pb, "make_numeric", exploding_make_numeric)
+
+    assert pybaseball_source._fetch_team_table(2025, "PHI") is expected
+
+
+def test_fetch_team_table_still_rejects_a_future_season() -> None:
+    """La unica validacion que hacia schedule_and_record y que se conserva."""
+    from deportivas.ingest.sources import pybaseball_source
+
+    with pytest.raises(ValueError, match="after current year"):
+        pybaseball_source._fetch_team_table(datetime.now(UTC).year + 1, "PHI")

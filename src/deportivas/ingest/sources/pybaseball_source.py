@@ -13,11 +13,15 @@ everywhere, nothing raises on an unexpected shape). Fase 10's
 here — verifying this mapping against a real fetch is a flagged follow-up,
 not something quietly assumed correct.
 
-No single call returns the whole league's schedule: ``schedule_and_record``
+No single call returns the whole league's schedule: baseball-reference's table
 is per-team, so ``fetch_schedule`` takes a list of the 30 team abbreviations
-and calls it once per team. Each real game therefore appears in two teams'
+and fetches once per team. Each real game therefore appears in two teams'
 results; since ``fixture_id`` is a deterministic hash of the natural key, both
 occurrences collapse into the same row on write rather than duplicating.
+
+Does **not** call ``pybaseball.schedule_and_record`` directly: its last step
+crashes on any in-progress season. See ``_fetch_team_table`` below for the
+detail and for which of its steps this adapter does use.
 """
 
 from __future__ import annotations
@@ -27,8 +31,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pandas as pd
-import pybaseball as pb
 import structlog
+from pybaseball import team_results as _pb
 
 from deportivas.domain.ids import fixture_id
 from deportivas.ingest.base import DataSource
@@ -62,7 +66,7 @@ class PybaseballSource(DataSource):
         frames = []
         for team in team_abbreviations:
             self._wait()
-            raw = pb.schedule_and_record(season, team)
+            raw = _fetch_team_table(season, team)
             self._archive_bytes(
                 endpoint="schedule_and_record",
                 params={"season": season, "team": team},
@@ -130,6 +134,47 @@ class PybaseballSource(DataSource):
                 }
             )
         return pd.DataFrame(rows)
+
+
+def _fetch_team_table(season: int, team: str) -> pd.DataFrame:
+    """Lo que ``pybaseball.schedule_and_record`` hace, menos su ultimo paso.
+
+    ``schedule_and_record`` encadena cuatro pasos: ``get_soup`` (descarga),
+    ``get_table`` (parsea el HTML), ``process_win_streak`` (racha) y
+    ``make_numeric`` (convierte columnas a float). El ultimo esta roto para
+    cualquier temporada en curso, y lo confirmo la primera corrida real de
+    daily.yml con ``ValueError: could not convert string to float: 'Unknown'``.
+
+    La causa es de la propia libreria: ``get_table`` rellena con el centinela
+    ``"Unknown"`` tres columnas cuando la celda viene vacia (un partido que
+    todavia no se juega no tiene marcador, entradas ni puesto en la tabla),
+    pero solo convierte una de las tres -- ``Attendance`` -- de vuelta a NaN.
+    ``make_numeric`` llega despues y hace ``astype(float)`` sobre
+    ``["R", "RA", "Inn", "Rank", "Attendance"]``, y revienta con el
+    ``"Unknown"`` que quedo en ``Rank``. En temporada baja no se nota; con la
+    temporada en marcha falla siempre, que es justo cuando hace falta.
+
+    Convertir texto a numero ahi es correcto y necesario -- baseball-reference
+    publica una tabla HTML y todo llega como texto; lo que falta es tolerar el
+    centinela, algo que ``pd.to_numeric(..., errors="coerce")`` daria gratis.
+
+    Este adaptador no necesita ese paso en absoluto: lee ``R``/``RA`` con
+    ``to_optional_int``, que ya devuelve ``None`` ante cualquier celda que no
+    sea un numero (``"Unknown"`` incluido), y no mira ninguna de las otras
+    columnas numericas. Tampoco necesita ``process_win_streak``: la racha no
+    entra en ``fixtures``. Asi que se llaman los dos pasos que si sirven y se
+    omiten los dos que no, usando las mismas funciones publicas de la libreria
+    -- sin parchearla por dentro ni duplicar su scraping. ``get_soup`` sigue
+    usando la sesion de pybaseball, que ya trae su propio rate limiting hacia
+    baseball-reference.
+    """
+    # Lo unico que se pierde al no pasar por schedule_and_record: su guarda de
+    # temporada futura. Se conserva aqui para no cambiar ese comportamiento.
+    if season > datetime.now(UTC).year:
+        raise ValueError("Season cannot be after current year")
+    # pybaseball no publica py.typed, asi que mypy ve Any: se ancla aqui.
+    table: pd.DataFrame = _pb.get_table(_pb.get_soup(season, team), team)
+    return table
 
 
 _DOUBLEHEADER_SUFFIX = re.compile(r"\s*\(\d+\)\s*$")

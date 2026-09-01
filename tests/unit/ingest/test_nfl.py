@@ -267,6 +267,73 @@ def test_fetch_team_game_stats_waits_archives_and_maps(
     assert len(result) == 2
 
 
+def test_fetch_team_game_stats_fetches_one_season_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Una temporada por llamada: si van juntas, una sin publicar se lleva por
+    delante a la que si tiene datos (ver el docstring del metodo)."""
+    source = _source(tmp_path)
+    calls: list[list[int]] = []
+
+    def fake_import(seasons: list[int], **kwargs: object) -> pd.DataFrame:
+        calls.append(list(seasons))
+        return pd.DataFrame([_play()])
+
+    monkeypatch.setattr(source, "_wait", lambda: 0.0)
+    monkeypatch.setattr("deportivas.ingest.sources.nfl.nfl.import_pbp_data", fake_import)
+
+    source.fetch_team_game_stats(
+        seasons=[2025, 2026], fixtures=pd.DataFrame([_fixtures_lookup_row()])
+    )
+
+    assert calls == [[2025], [2026]]
+
+
+def test_fetch_team_game_stats_keeps_published_season_when_another_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regresion del fallo real de daily.yml: nflverse no habia publicado
+    todavia el play-by-play de 2026 y el propio manejador de error de
+    nfl_data_py ("except Error", que no existe) lo convirtio en NameError.
+    La temporada que si esta publicada no puede perderse por eso."""
+    source = _source(tmp_path)
+
+    def fake_import(seasons: list[int], **kwargs: object) -> pd.DataFrame:
+        if seasons == [2026]:
+            raise NameError("name 'Error' is not defined")
+        return pd.DataFrame([_play()])
+
+    monkeypatch.setattr(source, "_wait", lambda: 0.0)
+    monkeypatch.setattr("deportivas.ingest.sources.nfl.nfl.import_pbp_data", fake_import)
+
+    result = source.fetch_team_game_stats(
+        seasons=[2025, 2026], fixtures=pd.DataFrame([_fixtures_lookup_row()])
+    )
+
+    assert len(result) == 2  # las dos filas (local y visitante) de 2025
+
+
+def test_fetch_team_game_stats_all_seasons_missing_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Con ninguna temporada disponible, nfl_data_py dejaria su variable
+    "plays" sin asignar y lanzaria UnboundLocalError. Aqui es un DataFrame
+    vacio: "todavia no hay datos" no es un fallo."""
+    source = _source(tmp_path)
+
+    def always_missing(seasons: list[int], **kwargs: object) -> pd.DataFrame:
+        raise NameError("name 'Error' is not defined")
+
+    monkeypatch.setattr(source, "_wait", lambda: 0.0)
+    monkeypatch.setattr("deportivas.ingest.sources.nfl.nfl.import_pbp_data", always_missing)
+
+    result = source.fetch_team_game_stats(
+        seasons=[2026], fixtures=pd.DataFrame([_fixtures_lookup_row()])
+    )
+
+    assert result.empty
+
+
 def test_fetch_schedules_waits_archives_and_maps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

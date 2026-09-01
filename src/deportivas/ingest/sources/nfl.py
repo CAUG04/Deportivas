@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 
 import nfl_data_py as nfl
 import pandas as pd
+import structlog
 
 from deportivas.domain.ids import fixture_id
 from deportivas.ingest.base import DataSource
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
     from deportivas.ingest.aliases import TeamAliasResolver
     from deportivas.ingest.ratelimit import RateLimiter
     from deportivas.storage.protocols import RawDocumentRepository
+
+logger = structlog.get_logger(__name__)
 
 _EASTERN = ZoneInfo("America/New_York")
 
@@ -125,12 +128,48 @@ class NflSource(DataSource):
         own ``game_id``, not our deterministic fixture id, so matching a play
         back to a fixture goes through (season, home_team_id, away_team_id)
         instead, which is unique within a season's regular NFL schedule.
+
+        Fetches **one season per call**, tolerating the ones nflverse has not
+        published yet, because ``import_pbp_data`` handles that case badly in
+        two separate ways. Its own "data not available for this year" branch
+        reads ``except Error as e:`` and ``Error`` is not defined anywhere in
+        the package, so the moment a year's parquet is missing the fallback
+        itself raises ``NameError`` — that is what the first real ``daily.yml``
+        run hit on the 2026 season, days before nflverse published it. And even
+        with that fixed upstream, asking for a list of seasons where *none*
+        resolve leaves its ``plays`` variable unassigned and raises
+        ``UnboundLocalError`` on return. Passing one season at a time and
+        skipping what fails keeps a published season's data from being lost to
+        an unpublished one sharing the same call.
+
+        The ``except Exception`` this needs is deliberate, not lazy: when the
+        library signals "no data" by raising ``NameError`` from its own error
+        handler, there is no meaningful exception type left to catch narrowly.
+        It wraps only the library call, so it cannot hide a failure of ours.
         """
-        self._wait()
-        raw = nfl.import_pbp_data(seasons, columns=list(PBP_COLUMNS), downcast=True)
+        frames: list[pd.DataFrame] = []
+        fetched: list[int] = []
+        for season in seasons:
+            self._wait()
+            try:
+                frames.append(
+                    nfl.import_pbp_data([season], columns=list(PBP_COLUMNS), downcast=True)
+                )
+            except Exception as exc:  # ver el comentario de abajo: no hay tipo fiable que capturar
+                logger.warning(
+                    "nfl_pbp_temporada_no_disponible",
+                    season=season,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                continue
+            fetched.append(season)
+
+        if not frames:
+            return pd.DataFrame()
+        raw = pd.concat(frames, ignore_index=True)
         self._archive_bytes(
             endpoint="import_pbp_data",
-            params={"seasons": seasons},
+            params={"seasons": fetched},
             content=raw.to_parquet(),
             content_type="application/octet-stream",
             status_code=None,

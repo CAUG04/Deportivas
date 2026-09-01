@@ -283,6 +283,9 @@ visible a una silenciosa:
   confiarle producción — ver el docstring de
   `src/deportivas/ingest/sources/pybaseball_source.py`. Exactamente el tipo
   de riesgo que `sources-health.yml` (Fase 10) está pensado para atrapar.
+  **Actualización:** la primera corrida real lo atrapó, aunque no donde se
+  esperaba — los nombres de columna resultaron correctos; lo que falla es el
+  último paso de `schedule_and_record`. Ver abajo.
 - **FBref bloquea con CAPTCHA a los runners de GitHub Actions.** Confirmado
   en producción (`sources-health.yml`), tres corridas seguidas: las 11
   competiciones de fútbol fallan de forma consistente al intentar FBref
@@ -312,6 +315,32 @@ visible a una silenciosa:
   Documentado, no oculto ni parcheado por dentro de una librería de
   terceros; volver a habilitarlas es un flag, en cuanto una de las dos
   fuentes quede resuelta.
+- **`pybaseball.schedule_and_record` revienta en cualquier temporada en
+  curso — resuelto.** Bug de la librería: su `get_table` rellena con el
+  centinela `"Unknown"` tres columnas cuando la celda viene vacía (un
+  partido que aún no se juega no tiene marcador, entradas ni puesto), pero
+  solo convierte una de las tres —`Attendance`— de vuelta a `NaN`. Su
+  `make_numeric` llega después y hace `astype(float)` sobre
+  `["R", "RA", "Inn", "Rank", "Attendance"]`, y falla con el `"Unknown"` que
+  quedó en `Rank`: `ValueError: could not convert string to float:
+  'Unknown'`. Convertir texto a número ahí es correcto y necesario —
+  baseball-reference publica HTML y todo llega como texto; lo que falta es
+  tolerar el centinela, algo que `pd.to_numeric(..., errors="coerce")` daría
+  gratis. Este adaptador no necesita ese paso en absoluto (lee `R`/`RA` con
+  `to_optional_int`, que ya devuelve `None` ante cualquier celda no
+  numérica), así que llama a los pasos que sí sirven —`get_soup` y
+  `get_table`— y omite `make_numeric`. Ver `_fetch_team_table` en
+  `src/deportivas/ingest/sources/pybaseball_source.py`.
+- **`nfl_data_py.import_pbp_data` falla al pedir una temporada sin publicar
+  — resuelto.** Bug de la librería, y doble: su rama de "no hay datos para
+  este año" está escrita `except Error as e:` y `Error` no existe en el
+  paquete, así que en cuanto falta el parquet de un año el propio manejador
+  de error lanza `NameError`; y aunque eso se arreglara aguas arriba, pedir
+  una lista de temporadas donde *ninguna* resuelve deja su variable `plays`
+  sin asignar y lanza `UnboundLocalError`. La primera corrida real lo
+  encontró con 2026, días antes de que nflverse lo publicara. Este
+  adaptador pide **una temporada por llamada** y salta las que fallan, para
+  que una sin publicar no se lleve por delante a la que sí tiene datos.
 - **ESPN no publica marcador final en `read_schedule()`.** Toda fixture de
   este adaptador queda `status="scheduled"`, incluso partidos ya jugados.
   Es la única fuente para Liga BetPlay, así que sus resultados históricos

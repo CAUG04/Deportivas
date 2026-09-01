@@ -32,12 +32,12 @@ permissions:
 
 env:
   GH_TOKEN: ${{ github.token }}
-  # FBref bloquea con CAPTCHA a los runners de GitHub Actions; el solver de
-  # soccerdata es un no-op en modo headless (ver el docstring de
-  # ingest/sources/fbref.py). false aqui + el paso de Xvfb + "xvfb-run" mas
-  # abajo es el intento de evadirlo -- sin garantias, FBref decide del lado
-  # de ellos.
-  DEPORTIVAS_FBREF_HEADLESS: "false"
+  # FBref bloquea con CAPTCHA a los runners de GitHub Actions incluso con
+  # DEPORTIVAS_FBREF_HEADLESS=false + Xvfb + "xvfb-run" (confirmado en
+  # produccion, ver README "FBref bloquea con CAPTCHA..."): con
+  # headless=false el solver de soccerdata si intenta resolver el CAPTCHA
+  # de verdad, pero FBref gana igual, mas lento por el overhead de Xvfb. Se
+  # deja headless=true (el default de Settings.fbref_headless).
 
 jobs:
   daily-pipeline:
@@ -65,14 +65,11 @@ jobs:
       - name: Instalar dependencias (lockfile exacto)
         run: uv sync --all-extras --frozen
 
-      - name: Instalar Xvfb (pantalla virtual para headless=false)
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-
       - name: Restaurar data lake (GitHub Release)
         run: ./scripts/restore_data_lake.sh
 
       - name: Pipeline diario
-        run: xvfb-run -a ./scripts/run_daily_pipeline.sh
+        run: ./scripts/run_daily_pipeline.sh
 
       - name: Publicar data lake (GitHub Release)
         if: always()

@@ -282,10 +282,11 @@ visible a una silenciosa:
 - **FBref bloquea con CAPTCHA a los runners de GitHub Actions.** Confirmado
   en producción (`sources-health.yml`): las 11 competiciones de fútbol
   fallan de forma consistente al intentar FBref desde el runner —
-  `ConnectionError` tras agotar los reintentos de `soccerdata`. Se intenta
+  `ConnectionError` tras agotar los reintentos de `soccerdata`. Se probó
   evadirlo con `headless=False` + Xvfb (ver
-  [Fase 9](#fbref-bloquea-con-captcha-a-los-runners-de-github-actions)),
-  sin garantías. football-data.co.uk y ESPN (ligas domésticas) cubren
+  [Fase 9](#fbref-bloquea-con-captcha-a-los-runners-de-github-actions)) y
+  se confirmó, también en producción, que no lo resuelve — revertido a
+  `headless=True`. football-data.co.uk y ESPN (ligas domésticas) cubren
   calendario/resultados igual mientras tanto.
 - **`soccerdata.ESPN.read_schedule()` no soporta calendarios por etapas
   (UEFA).** Bug de la librería, no de este proyecto: para las tres
@@ -871,13 +872,22 @@ Descubierto en la primera corrida real de `sources-health.yml`: FBref le
 sirve un CAPTCHA al runner (IP de datacenter), y el solver de `soccerdata`
 (basado en PyAutoGUI) es un *no-op* en modo headless — solo lo intenta de
 verdad con `headless=False`, que a su vez necesita una pantalla virtual o
-Chrome no tiene dónde dibujar. `Settings.fbref_headless` (`false` en
-`daily.yml`/`sources-health.yml`, `true` por defecto en local) más un paso
-que instala Xvfb y envuelve la corrida real con `xvfb-run -a` es el intento
-de evadirlo — **sin garantías**: FBref decide del lado de ellos, y un
-solver de CAPTCHA automatizado nunca tiene una tasa de éxito del 100%.
+Chrome no tiene dónde dibujar.
 
-Si sigue fallando de todas formas, no tumba el resto del pipeline:
+Se probó evadirlo: `Settings.fbref_headless=False` + un paso que instala
+Xvfb + `xvfb-run -a` envolviendo la corrida real, en `daily.yml` y
+`sources-health.yml`. Confirmado en producción que el cambio funcionaba al
+nivel de infraestructura — el solver ya no hacía el no-op, intentaba
+resolver el CAPTCHA de verdad — pero perdió los 5 reintentos en las 11
+competiciones de fútbol igual, y quedó ~25-30s más lento por competición
+por el overhead de Xvfb, sin ninguna ganancia a cambio. Revertido: los dos
+workflows corren de nuevo con `headless=True` (el default de
+`Settings.fbref_headless`), sin Xvfb. El código (`FBrefSource(headless=...)`,
+`Settings.fbref_headless`) se deja en el repositorio a propósito, como
+constancia probada y con tests de que este camino no funciona — evita que
+alguien lo reintente sin saber que ya se descartó con evidencia real.
+
+Como sigue fallando de todas formas, no tumba el resto del pipeline:
 football-data.co.uk y ESPN ya cubren calendario/resultados de forma
 redundante para la mayoría de competiciones (ver
 ["Sobre las fuentes de datos"](#sobre-las-fuentes-de-datos-qué-existe-y-qué-no)),

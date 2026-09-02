@@ -185,6 +185,50 @@ def test_fetch_schedule_empty_team_list_returns_empty_dataframe(tmp_path: Path) 
     assert fixtures.empty
 
 
+def test_one_failing_team_does_not_lose_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regresion del fallo real de daily.yml: la abreviatura "CWS" (que
+    baseball-reference escribe "CHW") tumbaba las 30, habiendo cargado bien
+    las cinco anteriores. Cada equipo es una pagina distinta."""
+    source = _source(tmp_path)
+
+    def flaky(season: int, team: str) -> pd.DataFrame:
+        if team == "CWS":
+            raise ValueError("Data cannot be retrieved for this team/year combo.")
+        return pd.DataFrame([_home_game_row(Tm=team)])
+
+    monkeypatch.setattr(source, "_wait", lambda: 0.0)
+    monkeypatch.setattr("deportivas.ingest.sources.pybaseball_source._fetch_team_table", flaky)
+
+    fixtures = source.fetch_schedule(
+        competition_id="usa-mlb", season=2025, team_abbreviations=["PHI", "CWS", "ATL"]
+    )
+
+    assert len(fixtures) == 2  # PHI y ATL sobreviven
+
+
+def test_every_team_failing_raises_instead_of_looking_like_no_games(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Que fallen todos no es "todavia no hay partidos": es la fuente rota, y
+    devolver vacio ahi lo haria indistinguible de temporada baja."""
+    source = _source(tmp_path)
+
+    def always_fails(season: int, team: str) -> pd.DataFrame:
+        raise ValueError("Data cannot be retrieved for this team/year combo.")
+
+    monkeypatch.setattr(source, "_wait", lambda: 0.0)
+    monkeypatch.setattr(
+        "deportivas.ingest.sources.pybaseball_source._fetch_team_table", always_fails
+    )
+
+    with pytest.raises(RuntimeError, match="es la fuente"):
+        source.fetch_schedule(
+            competition_id="usa-mlb", season=2025, team_abbreviations=["PHI", "ATL"]
+        )
+
+
 # -- El bug de make_numeric -----------------------------------------------------
 
 

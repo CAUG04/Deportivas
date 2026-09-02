@@ -62,11 +62,36 @@ class PybaseballSource(DataSource):
     def fetch_schedule(
         self, *, competition_id: str, season: int, team_abbreviations: list[str]
     ) -> pd.DataFrame:
-        """Returns rows shaped for the ``fixtures`` table, one call per team."""
+        """Returns rows shaped for the ``fixtures`` table, one call per team.
+
+        Un equipo que falle no puede llevarse por delante a los otros 29: cada
+        uno es una pagina distinta de baseball-reference, y que una no cargue
+        (abreviatura que cambio de franquicia, pagina todavia sin publicar para
+        esa temporada) no dice nada de las demas. Descubierto en produccion:
+        una sola abreviatura equivocada -- ``CWS``, que ahi se escribe ``CHW``
+        -- dejaba a MLB entera sin un solo partido, habiendo cargado bien los
+        cinco equipos anteriores.
+
+        Que fallen *todos* si es otra cosa: eso ya no es un equipo con la
+        pagina movida sino la fuente rota o la temporada inexistente, y se
+        propaga como error en vez de devolver un DataFrame vacio que el resto
+        del pipeline leeria como "no hay partidos todavia".
+        """
         frames = []
+        failures: list[str] = []
         for team in team_abbreviations:
             self._wait()
-            raw = _fetch_team_table(season, team)
+            try:
+                raw = _fetch_team_table(season, team)
+            except Exception as exc:
+                failures.append(team)
+                logger.warning(
+                    "pybaseball_equipo_no_disponible",
+                    season=season,
+                    team=team,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                continue
             self._archive_bytes(
                 endpoint="schedule_and_record",
                 params={"season": season, "team": team},
@@ -75,7 +100,13 @@ class PybaseballSource(DataSource):
                 status_code=None,
             )
             frames.append(self._to_fixtures(raw, competition_id=competition_id, season=season))
+
         if not frames:
+            if failures:
+                raise RuntimeError(
+                    f"pybaseball: fallaron los {len(failures)} equipos pedidos para {season} "
+                    f"({', '.join(failures)}) -- no es un equipo suelto, es la fuente"
+                )
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
 

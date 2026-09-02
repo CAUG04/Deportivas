@@ -50,6 +50,24 @@ def test_uefa_competitions_are_disabled() -> None:
     assert uefa_ids.isdisjoint({c.id for c in catalog.enabled})
 
 
+def test_mlb_team_abbreviations_are_the_ones_baseball_reference_uses() -> None:
+    """Regresion del fallo real de daily.yml: competitions.yaml traia las
+    abreviaturas de uso comun (CWS, KC, SD, SF, TB, WSH) y baseball-reference
+    usa otras (CHW, KCR, SDP, SFG, TBR, WSN). Una sola equivocada dejaba a MLB
+    sin un solo partido. first_season_map es la misma tabla contra la que
+    pybaseball valida, asi que un typo futuro falla aqui y no en produccion."""
+    from pybaseball.utils import first_season_map
+
+    load_competitions.cache_clear()
+    sources = load_competitions().get("usa-mlb").sources
+    abbreviations = getattr(sources, "team_abbreviations", None)
+
+    assert isinstance(abbreviations, list)
+    assert len(abbreviations) == 30
+    assert sorted(set(abbreviations)) == sorted(abbreviations)  # sin duplicados
+    assert [t for t in abbreviations if t not in first_season_map] == []
+
+
 def test_colombia_has_no_odds_capture() -> None:
     """Confirmado en produccion: 'soccer_colombia_primera_a' no existe en
     /v4/sports de The Odds API. Calendario/resultados (ESPN) siguen

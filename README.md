@@ -331,6 +331,18 @@ visible a una silenciosa:
   numérica), así que llama a los pasos que sí sirven —`get_soup` y
   `get_table`— y omite `make_numeric`. Ver `_fetch_team_table` en
   `src/deportivas/ingest/sources/pybaseball_source.py`.
+- **Abreviaturas de equipo de MLB: las de baseball-reference, no las de
+  prensa — resuelto.** `competitions.yaml` traía las de uso común (`CWS`,
+  `KC`, `SD`, `SF`, `TB`, `WSH`) y baseball-reference usa otras (`CHW`,
+  `KCR`, `SDP`, `SFG`, `TBR`, `WSN`). Y como el adaptador abortaba el bucle
+  entero al primer fallo, una sola equivocada dejaba a MLB sin un solo
+  partido — habiendo cargado bien los cinco equipos anteriores. Dos
+  arreglos: las 30 abreviaturas verificadas contra
+  `pybaseball.utils.first_season_map` (con un test que ancla el YAML a esa
+  misma tabla, para que un typo futuro falle en CI y no en producción), y
+  `fetch_schedule` ahora aísla cada equipo — que falle uno no toca a los
+  otros 29, pero que fallen *todos* lanza error en vez de devolver un
+  DataFrame vacío que se leería como "no hay partidos todavía".
 - **`nfl_data_py.import_pbp_data` falla al pedir una temporada sin publicar
   — resuelto.** Bug de la librería, y doble: su rama de "no hay datos para
   este año" está escrita `except Error as e:` y `Error` no existe en el

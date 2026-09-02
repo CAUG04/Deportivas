@@ -331,6 +331,25 @@ visible a una silenciosa:
   numérica), así que llama a los pasos que sí sirven —`get_soup` y
   `get_table`— y omite `make_numeric`. Ver `_fetch_team_table` en
   `src/deportivas/ingest/sources/pybaseball_source.py`.
+- **`seasons_back` era configuración muerta, y por eso ningún modelo de
+  fútbol podía entrenar — resuelto.** `competitions.yaml` declaraba
+  `seasons_back: 5` desde la Fase 1 y **nada en el código lo leía nunca**:
+  `run_daily_pipeline.sh` llamaba a `current-seasons` con su default de 2.
+  Con 2 temporadas el walk-forward produce una sola ventana, que entrena con
+  una única temporada — y una liga europea son 306-380 partidos (18-20
+  equipos), mientras `thresholds.yaml` pide `min_training_samples: 500` para
+  calibrar. Ninguna temporada de liga europea alcanza 500, así que el fútbol
+  no es que "todavía" no tuviera datos: era **estructuralmente imposible**
+  que entrenara. NBA y NHL no lo notaron porque una temporada suya son
+  ~1.300 partidos, muy por encima del umbral. Confirmado reproduciendo el
+  entrenamiento contra el data lake real: con `min_training_samples=500`,
+  cero ventanas; bajándolo a 300, una ventana y 220 predicciones. El arreglo
+  no es bajar el umbral —500 es un piso razonable para calibrar— sino tener
+  la historia que el propio YAML ya declaraba: `run_daily_pipeline.sh` acepta
+  ahora `SEASONS_COUNT` (2 por defecto, el incremental de cada día) y
+  `daily.yml` lo expone como input de `workflow_dispatch` para lanzar el
+  backfill a 5 temporadas. Con 5, las ventanas entrenan con 380, 760, 1.140 y
+  1.520 partidos: de la segunda en adelante, holgadamente por encima de 500.
 - **Abreviaturas de equipo de MLB: las de baseball-reference, no las de
   prensa — resuelto.** `competitions.yaml` traía las de uso común (`CWS`,
   `KC`, `SD`, `SF`, `TB`, `WSH`) y baseball-reference usa otras (`CHW`,

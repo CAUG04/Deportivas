@@ -17,6 +17,15 @@ on:
   schedule:
     - cron: "0 6 * * *" # 06:00 UTC, todos los dias
   workflow_dispatch:
+    inputs:
+      seasons_count:
+        description: >-
+          Temporadas a ingerir por competicion. 2 (el default del cron) es lo
+          incremental: la actual y la anterior. Subirlo a 5 (el seasons_back
+          que competitions.yaml declara) convierte esta corrida en el backfill
+          historico que los modelos de futbol necesitan para poder entrenar.
+        required: false
+        default: "2"
 
 # Mismo grupo que odds.yml a proposito: ambos leen y publican el mismo
 # asset del Release "data-lake" (scripts/{restore,publish}_data_lake.sh), y
@@ -74,6 +83,11 @@ jobs:
         run: ./scripts/restore_data_lake.sh
 
       - name: Pipeline diario
+        env:
+          # El cron no manda inputs, asi que ahi queda vacio -> el script cae
+          # a su default de 2 (incremental). Solo un workflow_dispatch puede
+          # pedir mas, para un backfill puntual.
+          SEASONS_COUNT: ${{ inputs.seasons_count || '2' }}
         run: ./scripts/run_daily_pipeline.sh
 
       - name: Publicar data lake (GitHub Release)

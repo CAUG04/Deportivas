@@ -31,6 +31,19 @@ source scripts/lib_common.sh
 WEEKLY_DAY="${WEEKLY_DAY:-7}" # ISO 8601: 1=lunes .. 7=domingo
 today_dow="$(date -u +%u)"
 
+# Cuantas temporadas pedir por competicion. 2 es lo incremental de cada dia:
+# la actual y la anterior, que es todo lo que puede cambiar. Subirlo convierte
+# esta misma corrida en el backfill que competitions.yaml lleva declarando en
+# "seasons_back" -- ver el README, "Backfill: por que 2 temporadas no bastan".
+#
+# No es cosmetico: el walk-forward entrena en las temporadas 1..N y valida en
+# N+1, asi que con 2 temporadas solo hay UNA ventana y entrena con una sola
+# temporada. Una liga europea son 306-380 partidos por temporada y
+# thresholds.yaml pide 500 para calibrar, asi que con 2 temporadas ningun
+# modelo de futbol puede entrenar nunca -- estructuralmente, no "todavia no".
+# NBA/NHL no lo notaron porque una temporada suya son ~1300 partidos.
+SEASONS_COUNT="${SEASONS_COUNT:-2}"
+
 run() {
     echo "+ $*"
     "$@" || echo "  aviso: fallo -- $*"
@@ -50,7 +63,7 @@ while IFS= read -r competition; do
     fi
 
     echo "--- ${id} (${sport}, ${refresh}) ---"
-    seasons="$(uv run deportivas current-seasons --competition-id "$id")"
+    seasons="$(uv run deportivas current-seasons --competition-id "$id" --count "$SEASONS_COUNT")"
 
     case "$sport" in
     football)
